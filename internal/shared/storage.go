@@ -2,6 +2,7 @@ package shared
 
 const (
 	STORE_CTX_SESSION_KEY = "session_key"
+	STORE_CTX_NONCE       = "nonce"
 )
 
 type Storage interface {

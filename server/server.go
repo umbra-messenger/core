@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -11,16 +12,7 @@ import (
 )
 
 const (
-	CTX_SERVER_EXCHANGE    = "server_exchange"
-	CTX_SERVER_SIGNING     = "server_signing"
-	CTX_PUZZLE_KEY_DERIV   = "puzzle_key_derivation"
-	CTX_TOKEN_ENCRYPTION   = "session_token_encryption"
-	CTX_CHALLENGE_HASH     = "handshake_challenge"
-	CTX_SHARED_SECRET      = "shared_secret_derivation"
-	CTX_PAYLOAD_ENCRYPTION = "challenge_payload_encryption"
-	CTX_STORAGE_ENCRYPTION = "session_state_storage"
-	CTX_INIT_VERIFY        = "handshake_init_verify"
-	CTX_CHALLENGE_SIGN     = "handshake_challenge_sign"
+	CTX_STORAGE_CRYPTO = "session_state_storage"
 )
 
 // Handle initiates the server-side handshake and session loop for a single connected client.
@@ -41,7 +33,7 @@ func Handle(transport shared.Transport, storage shared.Storage, crypto crypt.Cry
 	}
 
 	// 2. Verify Client's Exchange Key Signature
-	is_valid, err := crypto.Verify(CTX_INIT_VERIFY, init_msg.ExchangePublicKey, init_msg.ExchangeKeySignature, init_msg.SigningPublicKey)
+	is_valid, err := crypto.Verify(shared.CTX_HANDSHAKE_INIT_SIG, init_msg.ExchangePublicKey, init_msg.ExchangeKeySignature, init_msg.SigningPublicKey)
 	if err != nil {
 		return fmt.Errorf("server: crypto verify failed: %w", err)
 	}
@@ -56,18 +48,18 @@ func Handle(transport shared.Transport, storage shared.Storage, crypto crypt.Cry
 	}
 
 	// 4. Derive Server Keys
-	server_exchange_pub, server_exchange_priv, err := crypto.DeriveExchangeKeyPair(CTX_SERVER_EXCHANGE, server_master_key)
+	server_exchange_pub, server_exchange_priv, err := crypto.DeriveExchangeKeyPair(shared.CTX_EXCHANGE_KEY_DERIV, server_master_key)
 	if err != nil {
 		return fmt.Errorf("server: failed to derive exchange keys: %w", err)
 	}
 
-	server_signing_pub, server_signing_priv, err := crypto.DeriveSigningKeyPair(CTX_SERVER_SIGNING, server_master_key)
+	server_signing_pub, server_signing_priv, err := crypto.DeriveSigningKeyPair(shared.CTX_SIGNING_KEY_DERIV, server_master_key)
 	if err != nil {
 		return fmt.Errorf("server: failed to derive signing keys: %w", err)
 	}
 
 	// 5. Derive Shared Secret
-	shared_secret, err := crypto.DeriveSharedSecret(CTX_SHARED_SECRET, server_exchange_priv, init_msg.ExchangePublicKey)
+	shared_secret, err := crypto.DeriveSharedSecret(shared.CTX_SHARED_SECRET_DERIV, server_exchange_priv, init_msg.ExchangePublicKey)
 	if err != nil {
 		return fmt.Errorf("server: failed to derive shared secret: %w", err)
 	}
@@ -92,12 +84,12 @@ func Handle(transport shared.Transport, storage shared.Storage, crypto crypt.Cry
 	binary.BigEndian.PutUint64(puzzle_int_bytes, uint64(puzzle_int))
 
 	// 7. Create Puzzle Key and Encrypt Token
-	puzzle_key, err := crypto.HashPassword(CTX_PUZZLE_KEY_DERIV, puzzle_int_bytes, session_id, 32)
+	puzzle_key, err := crypto.HashPassword(shared.CTX_PUZZLE_KEY_DERIV, puzzle_int_bytes, session_id, 32)
 	if err != nil {
 		return fmt.Errorf("server: failed to derive puzzle key: %w", err)
 	}
 
-	nonce1, ct1, tag1, err := crypto.EncryptFull(CTX_TOKEN_ENCRYPTION, session_token, puzzle_key)
+	nonce1, ct1, tag1, err := crypto.EncryptFull(shared.CTX_SESSION_TOKEN_CRYPTO, session_token, puzzle_key)
 	if err != nil {
 		return fmt.Errorf("server: failed to encrypt session token: %w", err)
 	}
@@ -109,7 +101,7 @@ func Handle(transport shared.Transport, storage shared.Storage, crypto crypt.Cry
 	}
 
 	// 8. Hash Puzzle Integer
-	hashed_random_key, err := crypto.Hash(CTX_CHALLENGE_HASH, puzzle_int_bytes, 32)
+	hashed_random_key, err := crypto.Hash(shared.CTX_PUZZLE_HASH, puzzle_int_bytes, 32)
 	if err != nil {
 		return fmt.Errorf("server: failed to hash puzzle integer: %w", err)
 	}
@@ -124,7 +116,7 @@ func Handle(transport shared.Transport, storage shared.Storage, crypto crypt.Cry
 		return fmt.Errorf("server: failed to marshal challenge payload: %w", err)
 	}
 
-	nonce2, ct2, tag2, err := crypto.EncryptFull(CTX_PAYLOAD_ENCRYPTION, payload_bytes, shared_secret)
+	nonce2, ct2, tag2, err := crypto.EncryptFull(shared.CTX_CHALLENGE_PAYLOAD_CRYPTO, payload_bytes, shared_secret)
 	if err != nil {
 		return fmt.Errorf("server: failed to encrypt challenge payload: %w", err)
 	}
@@ -142,7 +134,7 @@ func Handle(transport shared.Transport, storage shared.Storage, crypto crypt.Cry
 	sig_data = append(sig_data, server_signing_pub...)
 	sig_data = append(sig_data, outer_ep_bytes...)
 
-	signature, err := crypto.Sign(CTX_CHALLENGE_SIGN, sig_data, server_signing_priv)
+	signature, err := crypto.Sign(shared.CTX_HANDSHAKE_CHALLENGE_SIG, sig_data, server_signing_priv)
 	if err != nil {
 		return fmt.Errorf("server: failed to sign challenge: %w", err)
 	}
@@ -165,13 +157,160 @@ func Handle(transport shared.Transport, storage shared.Storage, crypto crypt.Cry
 		return fmt.Errorf("server: failed to send HandshakeChallenge: %w", err)
 	}
 
-	// 12. Store Session State
+	// 12. Store Initial Session State (IsEstablished = false)
 	state := protocol.SessionState{
 		ClientExchangePublicKey: init_msg.ExchangePublicKey,
 		ClientSigningPublicKey:  init_msg.SigningPublicKey,
 		ServerMasterKey:         server_master_key,
 		SessionToken:            session_token,
+		IsEstablished:           false,
 	}
+
+	if err := saveState(storage, crypto, state, session_id); err != nil {
+		return err
+	}
+
+	// Derive session symmetric key for future requests
+	session_sym_key, err := crypto.Hash(shared.CTX_SESSION_KEY_DERIV, shared_secret, 32)
+	if err != nil {
+		return fmt.Errorf("server: failed to derive session symmetric key: %w", err)
+	}
+
+	// 13. Main Request/Response Loop
+	for {
+		req_data, err := transport.Receive()
+		if err != nil {
+			return fmt.Errorf("server: failed to receive request: %w", err)
+		}
+
+		var req protocol.GeneralRequest
+		if err := req.UnmarshalBinary(req_data); err != nil {
+			return fmt.Errorf("server: failed to unmarshal request: %w", err)
+		}
+
+		// Load Session State
+		state, err := loadState(storage, crypto, req.SessionID)
+		if err != nil {
+			return fmt.Errorf("server: session load failed: %w", err)
+		}
+
+		// Verify Request Signature
+		req_sig_data := make([]byte, 0, len(req.SessionID)+len(req.SessionToken)+len(req.Nonce)+len(req.EncryptedPayload))
+		req_sig_data = append(req_sig_data, req.SessionID...)
+		req_sig_data = append(req_sig_data, req.SessionToken...)
+		req_sig_data = append(req_sig_data, req.Nonce...)
+		req_sig_data = append(req_sig_data, req.EncryptedPayload...)
+
+		is_valid, err := crypto.Verify(shared.CTX_GENERAL_REQUEST_SIG, req_sig_data, req.Signature, state.ClientSigningPublicKey)
+		if err != nil {
+			return fmt.Errorf("server: crypto verify failed: %w", err)
+		}
+		if !is_valid {
+			_ = storage.Delete(shared.STORE_CTX_SESSION_KEY, string(req.SessionID))
+			return errors.New("server: invalid request signature")
+		}
+
+		// Check Nonce Replay via Storage
+		nonce_key := string(req.SessionID) + "_" + string(req.Nonce)
+		_, err = storage.Retrieve(shared.STORE_CTX_NONCE, nonce_key)
+		if err == nil {
+			_ = storage.Delete(shared.STORE_CTX_SESSION_KEY, string(req.SessionID))
+			return errors.New("server: nonce replay detected")
+		}
+		// Store nonce
+		_ = storage.Store(shared.STORE_CTX_NONCE, nonce_key, []byte{1})
+
+		is_verification := len(req.EncryptedPayload) == 0
+
+		if is_verification {
+			if state.IsEstablished {
+				_ = storage.Delete(shared.STORE_CTX_SESSION_KEY, string(req.SessionID))
+				return errors.New("server: verification request on established session")
+			}
+
+			if !bytes.Equal(req.SessionToken, state.SessionToken) {
+				_ = storage.Delete(shared.STORE_CTX_SESSION_KEY, string(req.SessionID))
+				return errors.New("server: invalid session token during verification")
+			}
+
+			// Success: Update State
+			state.IsEstablished = true
+			if err := saveState(storage, crypto, state, req.SessionID); err != nil {
+				return err
+			}
+
+			// Send Success Response (Empty payload, signed)
+			resp := protocol.GeneralResponse{
+				EncryptedPayload: []byte{},
+			}
+			resp.Signature, err = crypto.Sign(shared.CTX_GENERAL_RESPONSE_SIG, resp.EncryptedPayload, server_signing_priv)
+			if err != nil {
+				return fmt.Errorf("server: failed to sign response: %w", err)
+			}
+
+			resp_bytes, err := resp.MarshalBinary()
+			if err != nil {
+				return fmt.Errorf("server: failed to marshal response: %w", err)
+			}
+			if err := transport.Send(resp_bytes); err != nil {
+				return fmt.Errorf("server: failed to send response: %w", err)
+			}
+			continue
+		}
+
+		// Normal Request Processing
+		if !state.IsEstablished {
+			_ = storage.Delete(shared.STORE_CTX_SESSION_KEY, string(req.SessionID))
+			return errors.New("server: normal request on unestablished session")
+		}
+
+		// Decrypt payload
+		var req_ep protocol.EncryptedPackage
+		if err := req_ep.UnmarshalBinary(req.EncryptedPayload); err != nil {
+			return fmt.Errorf("server: failed to unmarshal request payload: %w", err)
+		}
+
+		plaintext, err := crypto.DecryptFull(shared.CTX_GENERAL_REQUEST_CRYPTO, req_ep.Ciphertext, req_ep.Tag, req_ep.Nonce, session_sym_key, false)
+		if err != nil {
+			return fmt.Errorf("server: failed to decrypt request payload: %w", err)
+		}
+
+		// TODO: Process plaintext application logic here
+		_ = plaintext
+
+		// Build Response
+		resp_plain := []byte("OK")
+		nonce_resp, ct_resp, tag_resp, err := crypto.EncryptFull(shared.CTX_GENERAL_RESPONSE_CRYPTO, resp_plain, session_sym_key)
+		if err != nil {
+			return fmt.Errorf("server: failed to encrypt response payload: %w", err)
+		}
+
+		resp_ep := protocol.EncryptedPackage{Nonce: nonce_resp, Ciphertext: ct_resp, Tag: tag_resp}
+		resp_ep_bytes, err := resp_ep.MarshalBinary()
+		if err != nil {
+			return fmt.Errorf("server: failed to marshal response payload: %w", err)
+		}
+
+		resp := protocol.GeneralResponse{
+			EncryptedPayload: resp_ep_bytes,
+		}
+		resp.Signature, err = crypto.Sign(shared.CTX_GENERAL_RESPONSE_SIG, resp.EncryptedPayload, server_signing_priv)
+		if err != nil {
+			return fmt.Errorf("server: failed to sign response: %w", err)
+		}
+
+		resp_bytes, err := resp.MarshalBinary()
+		if err != nil {
+			return fmt.Errorf("server: failed to marshal response: %w", err)
+		}
+		if err := transport.Send(resp_bytes); err != nil {
+			return fmt.Errorf("server: failed to send response: %w", err)
+		}
+	}
+}
+
+// saveState marshals and securely stores the SessionState.
+func saveState(storage shared.Storage, crypto crypt.CryptoSuite, state protocol.SessionState, session_id []byte) error {
 	state_bytes, err := state.MarshalBinary()
 	if err != nil {
 		return fmt.Errorf("server: failed to marshal session state: %w", err)
@@ -179,11 +318,11 @@ func Handle(transport shared.Transport, storage shared.Storage, crypto crypt.Cry
 
 	if !storage.IsSafe() {
 		temp_key := storage.GetTempKey()
-		nonce3, ct3, tag3, err := crypto.EncryptFull(CTX_STORAGE_ENCRYPTION, state_bytes, temp_key)
+		nonce, ct, tag, err := crypto.EncryptFull(CTX_STORAGE_CRYPTO, state_bytes, temp_key)
 		if err != nil {
 			return fmt.Errorf("server: failed to encrypt state for storage: %w", err)
 		}
-		ep := protocol.EncryptedPackage{Nonce: nonce3, Ciphertext: ct3, Tag: tag3}
+		ep := protocol.EncryptedPackage{Nonce: nonce, Ciphertext: ct, Tag: tag}
 		state_bytes, err = ep.MarshalBinary()
 		if err != nil {
 			return fmt.Errorf("server: failed to marshal encrypted state: %w", err)
@@ -193,6 +332,32 @@ func Handle(transport shared.Transport, storage shared.Storage, crypto crypt.Cry
 	if err := storage.Store(shared.STORE_CTX_SESSION_KEY, string(session_id), state_bytes); err != nil {
 		return fmt.Errorf("server: failed to store session state: %w", err)
 	}
-
 	return nil
+}
+
+// loadState retrieves and decrypts the SessionState from storage.
+func loadState(storage shared.Storage, crypto crypt.CryptoSuite, session_id []byte) (protocol.SessionState, error) {
+	var state protocol.SessionState
+
+	state_bytes, err := storage.Retrieve(shared.STORE_CTX_SESSION_KEY, string(session_id))
+	if err != nil {
+		return state, fmt.Errorf("session not found or retrieve failed: %w", err)
+	}
+
+	if !storage.IsSafe() {
+		temp_key := storage.GetTempKey()
+		var ep protocol.EncryptedPackage
+		if err := ep.UnmarshalBinary(state_bytes); err != nil {
+			return state, fmt.Errorf("failed to unmarshal encrypted state: %w", err)
+		}
+		state_bytes, err = crypto.DecryptFull(CTX_STORAGE_CRYPTO, ep.Ciphertext, ep.Tag, ep.Nonce, temp_key, false)
+		if err != nil {
+			return state, fmt.Errorf("failed to decrypt state: %w", err)
+		}
+	}
+
+	if err := state.UnmarshalBinary(state_bytes); err != nil {
+		return state, fmt.Errorf("failed to unmarshal session state: %w", err)
+	}
+	return state, nil
 }

@@ -13,6 +13,7 @@ type SessionState struct {
 	ClientSigningPublicKey  []byte
 	ServerMasterKey         [32]byte
 	SessionToken            []byte
+	IsEstablished           bool
 }
 
 func (s *SessionState) MarshalBinary() ([]byte, error) {
@@ -23,7 +24,8 @@ func (s *SessionState) MarshalBinary() ([]byte, error) {
 	len_client_sign := uint64(len(s.ClientSigningPublicKey))
 	len_token := uint64(len(s.SessionToken))
 
-	total_size := 8 + int(len_client_exch) + 8 + int(len_client_sign) + 32 + 8 + int(len_token) + 16
+	// 8+exch + 8+sign + 32 + 8+token + 1(bool) + 16(checksum)
+	total_size := 8 + int(len_client_exch) + 8 + int(len_client_sign) + 32 + 8 + int(len_token) + 1 + 16
 	buf := make([]byte, total_size)
 	offset := 0
 
@@ -45,6 +47,13 @@ func (s *SessionState) MarshalBinary() ([]byte, error) {
 	copy(buf[offset:offset+int(len_token)], s.SessionToken)
 	offset += int(len_token)
 
+	if s.IsEstablished {
+		buf[offset] = 1
+	} else {
+		buf[offset] = 0
+	}
+	offset += 1
+
 	checksum := crypt.Checksum(buf[:offset])
 	copy(buf[offset:offset+16], checksum[:])
 
@@ -52,7 +61,8 @@ func (s *SessionState) MarshalBinary() ([]byte, error) {
 }
 
 func (s *SessionState) UnmarshalBinary(data []byte) error {
-	const min_size = 8 + 8 + 32 + 8 + 16 // 64 bytes
+	// 8 + 8 + 32 + 8 + 1 + 16 = 73 bytes minimum
+	const min_size = 73
 	if len(data) < min_size {
 		return errors.New("protocol: data too short for SessionState")
 	}
@@ -98,6 +108,12 @@ func (s *SessionState) UnmarshalBinary(data []byte) error {
 	s.SessionToken = make([]byte, len_token)
 	copy(s.SessionToken, data[offset:offset+int(len_token)])
 	offset += int(len_token)
+
+	if offset+1 > payload_length {
+		return errors.New("protocol: underflow reading IsEstablished")
+	}
+	s.IsEstablished = data[offset] == 1
+	offset += 1
 
 	if offset != payload_length {
 		return errors.New("protocol: unexpected trailing data in payload")
