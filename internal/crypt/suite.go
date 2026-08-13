@@ -27,4 +27,7 @@ type CryptoSuite interface {
 	DeriveSigningKeyPair(ctx string, master [32]byte) (public_key []byte, private_key []byte, err error)
 	Sign(ctx string, message []byte, private_key []byte) (signature []byte, err error)
 	Verify(ctx string, message []byte, signature []byte, public_key []byte) (is_valid bool, err error)
+
+	// --- RNG ---
+	Rand(data []byte) error
 }
