@@ -11,10 +11,6 @@ import (
 	"github.com/umbra-messenger/core/internal/shared"
 )
 
-const (
-	CTX_STORAGE_CRYPTO = "session_state_storage"
-)
-
 // Handle initiates the server-side handshake and session loop for a single connected client.
 func Handle(transport shared.Transport, storage shared.Storage, crypto crypt.CryptoSuite) error {
 	if transport == nil || storage == nil || crypto == nil {
@@ -318,7 +314,7 @@ func saveState(storage shared.Storage, crypto crypt.CryptoSuite, state protocol.
 
 	if !storage.IsSafe() {
 		temp_key := storage.GetTempKey()
-		nonce, ct, tag, err := crypto.EncryptFull(CTX_STORAGE_CRYPTO, state_bytes, temp_key)
+		nonce, ct, tag, err := crypto.EncryptFull(shared.CTX_STORAGE_CRYPTO, state_bytes, temp_key)
 		if err != nil {
 			return fmt.Errorf("server: failed to encrypt state for storage: %w", err)
 		}
@@ -350,7 +346,7 @@ func loadState(storage shared.Storage, crypto crypt.CryptoSuite, session_id []by
 		if err := ep.UnmarshalBinary(state_bytes); err != nil {
 			return state, fmt.Errorf("failed to unmarshal encrypted state: %w", err)
 		}
-		state_bytes, err = crypto.DecryptFull(CTX_STORAGE_CRYPTO, ep.Ciphertext, ep.Tag, ep.Nonce, temp_key, false)
+		state_bytes, err = crypto.DecryptFull(shared.CTX_STORAGE_CRYPTO, ep.Ciphertext, ep.Tag, ep.Nonce, temp_key, false)
 		if err != nil {
 			return state, fmt.Errorf("failed to decrypt state: %w", err)
 		}

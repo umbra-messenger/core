@@ -14,6 +14,8 @@ type SessionState struct {
 	ServerMasterKey         [32]byte
 	SessionToken            []byte
 	IsEstablished           bool
+	AuthAttemptCount        uint32
+	LastAuthAttemptTime     int64
 }
 
 func (s *SessionState) MarshalBinary() ([]byte, error) {
@@ -24,8 +26,8 @@ func (s *SessionState) MarshalBinary() ([]byte, error) {
 	len_client_sign := uint64(len(s.ClientSigningPublicKey))
 	len_token := uint64(len(s.SessionToken))
 
-	// 8+exch + 8+sign + 32 + 8+token + 1(bool) + 16(checksum)
-	total_size := 8 + int(len_client_exch) + 8 + int(len_client_sign) + 32 + 8 + int(len_token) + 1 + 16
+	// 8+exch + 8+sign + 32 + 8+token + 1(bool) + 4(count) + 8(time) + 16(checksum)
+	total_size := 8 + int(len_client_exch) + 8 + int(len_client_sign) + 32 + 8 + int(len_token) + 1 + 4 + 8 + 16
 	buf := make([]byte, total_size)
 	offset := 0
 
@@ -54,6 +56,12 @@ func (s *SessionState) MarshalBinary() ([]byte, error) {
 	}
 	offset += 1
 
+	binary.BigEndian.PutUint32(buf[offset:offset+4], s.AuthAttemptCount)
+	offset += 4
+
+	binary.BigEndian.PutUint64(buf[offset:offset+8], uint64(s.LastAuthAttemptTime))
+	offset += 8
+
 	checksum := crypt.Checksum(buf[:offset])
 	copy(buf[offset:offset+16], checksum[:])
 
@@ -61,8 +69,8 @@ func (s *SessionState) MarshalBinary() ([]byte, error) {
 }
 
 func (s *SessionState) UnmarshalBinary(data []byte) error {
-	// 8 + 8 + 32 + 8 + 1 + 16 = 73 bytes minimum
-	const min_size = 73
+	// 8 + 8 + 32 + 8 + 1 + 4 + 8 + 16 = 85 bytes minimum
+	const min_size = 85
 	if len(data) < min_size {
 		return errors.New("protocol: data too short for SessionState")
 	}
@@ -114,6 +122,18 @@ func (s *SessionState) UnmarshalBinary(data []byte) error {
 	}
 	s.IsEstablished = data[offset] == 1
 	offset += 1
+
+	if offset+4 > payload_length {
+		return errors.New("protocol: underflow reading AuthAttemptCount")
+	}
+	s.AuthAttemptCount = binary.BigEndian.Uint32(data[offset : offset+4])
+	offset += 4
+
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading LastAuthAttemptTime")
+	}
+	s.LastAuthAttemptTime = int64(binary.BigEndian.Uint64(data[offset : offset+8]))
+	offset += 8
 
 	if offset != payload_length {
 		return errors.New("protocol: unexpected trailing data in payload")
