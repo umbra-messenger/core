@@ -24,9 +24,24 @@ type CryptoSuite interface {
 
 	MAC(ctx string, key, data []byte, out_length int) (output []byte, err error)
 
-	// --- Asymmetric Key Exchange ---
+	// --- Asymmetric Key Exchange (KEM Model) ---
+
+	// DeriveExchangeKeyPair generates a KEM keypair from a 32-byte master seed.
+	// The Host implementation is responsible for expanding this 32-byte seed
+	// into the specific seed length required by the algorithm (e.g., 64 bytes for ML-KEM).
 	DeriveExchangeKeyPair(ctx string, master [32]byte) (public_key []byte, private_key []byte, err error)
-	DeriveSharedSecret(ctx string, local_private_key []byte, remote_public_key []byte) (shared_secret []byte, err error)
+
+	// Encapsulate generates a shared secret and a ciphertext using the remote public key.
+	// - PQC (ML-KEM): Performs standard KEM encapsulation.
+	// - Classical (X25519/ECDH): Generates an ephemeral keypair, performs DH,
+	//   and returns the ephemeral public key as the 'ciphertext'.
+	Encapsulate(ctx string, remote_public_key []byte) (ciphertext []byte, shared_secret []byte, err error)
+
+	// Decapsulate recovers the shared secret using the local private key and the ciphertext.
+	// - PQC (ML-KEM): Performs standard KEM decapsulation.
+	// - Classical (X25519/ECDH): Performs DH using the local private key and the
+	//   'ciphertext' (which is the remote's ephemeral public key).
+	Decapsulate(ctx string, local_private_key []byte, ciphertext []byte) (shared_secret []byte, err error)
 
 	// --- Digital Signatures ---
 	DeriveSigningKeyPair(ctx string, master [32]byte) (public_key []byte, private_key []byte, err error)
