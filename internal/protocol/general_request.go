@@ -5,103 +5,69 @@ import (
 	"errors"
 
 	"github.com/umbra-messenger/core/internal/crypt"
+	"github.com/umbra-messenger/core/internal/shared"
 )
 
-// GeneralRequest represents a post-handshake client-to-server message.
-// It carries the session credentials, a nonce, the encrypted payload,
-// and a signature covering session_id || session_token || nonce || encrypted_payload.
+// GeneralRequest is the standard post-handshake request envelope sent by the client.
 type GeneralRequest struct {
-	SessionID        []byte
-	SessionToken     []byte
-	Nonce            []byte
+	// SessionID is the 16-byte identifier for the active session.
+	SessionID [16]byte
+	// Nonce is a monotonically increasing uint64 counter to prevent replay attacks.
+	Nonce uint64
+	// EncryptedPayload holds the serialized EncryptedPackage containing the application data.
 	EncryptedPayload []byte
-	Signature        []byte
+	// Signature is the client's Ed25519 signature over (SessionID || Nonce || EncryptedPayload).
+	Signature []byte
 }
 
-// MarshalBinary serializes the GeneralRequest struct into a binary envelope.
-// Binary Layout:
-//
-//	[8 bytes] session_id_length
-//	[N bytes] SessionID
-//	[8 bytes] session_token_length
-//	[M bytes] SessionToken
-//	[8 bytes] nonce_length
-//	[P bytes] Nonce
-//	[8 bytes] encrypted_payload_length
-//	[Q bytes] EncryptedPayload
-//	[8 bytes] signature_length
-//	[R bytes] Signature
-//	[16 bytes] checksum
 func (g *GeneralRequest) MarshalBinary() ([]byte, error) {
-	if g.SessionID == nil {
-		return nil, errors.New("protocol: SessionID is nil")
-	}
-	if g.SessionToken == nil {
-		return nil, errors.New("protocol: SessionToken is nil")
-	}
-	if g.Nonce == nil {
-		return nil, errors.New("protocol: Nonce is nil")
-	}
-	if g.EncryptedPayload == nil {
-		return nil, errors.New("protocol: EncryptedPayload is nil")
-	}
-	if g.Signature == nil {
-		return nil, errors.New("protocol: Signature is nil")
+	if g.EncryptedPayload == nil || g.Signature == nil {
+		return nil, errors.New("protocol: GeneralRequest contains nil slices")
 	}
 
-	session_id_length := uint64(len(g.SessionID))
-	session_token_length := uint64(len(g.SessionToken))
-	nonce_length := uint64(len(g.Nonce))
-	encrypted_payload_length := uint64(len(g.EncryptedPayload))
-	signature_length := uint64(len(g.Signature))
+	enc_payload_len := uint64(len(g.EncryptedPayload))
+	signature_len := uint64(len(g.Signature))
 
-	totalSize := 8 + int(session_id_length) +
-		8 + int(session_token_length) +
-		8 + int(nonce_length) +
-		8 + int(encrypted_payload_length) +
-		8 + int(signature_length) +
-		16
-
-	buf := make([]byte, totalSize)
+	// 1 (type) + 16 (session_id) + 8 (nonce) + 8 (len1) + data1 + 8 (len2) + data2 + 16 (checksum)
+	total_size := 1 + 16 + 8 + 8 + int(enc_payload_len) + 8 + int(signature_len) + 16
+	buf := make([]byte, total_size)
 	offset := 0
 
-	binary.BigEndian.PutUint64(buf[offset:offset+8], session_id_length)
-	offset += 8
-	copy(buf[offset:offset+int(session_id_length)], g.SessionID)
-	offset += int(session_id_length)
+	// 1. MessageType (Wire-format)
+	buf[offset] = shared.MSG_GENERAL_REQ
+	offset += 1
 
-	binary.BigEndian.PutUint64(buf[offset:offset+8], session_token_length)
-	offset += 8
-	copy(buf[offset:offset+int(session_token_length)], g.SessionToken)
-	offset += int(session_token_length)
+	// 2. SessionID (Fixed 16 bytes)
+	copy(buf[offset:offset+16], g.SessionID[:])
+	offset += 16
 
-	binary.BigEndian.PutUint64(buf[offset:offset+8], nonce_length)
+	// 3. Nonce (Fixed 8 bytes)
+	binary.BigEndian.PutUint64(buf[offset:offset+8], g.Nonce)
 	offset += 8
-	copy(buf[offset:offset+int(nonce_length)], g.Nonce)
-	offset += int(nonce_length)
 
-	binary.BigEndian.PutUint64(buf[offset:offset+8], encrypted_payload_length)
+	// 4. EncryptedPayload
+	binary.BigEndian.PutUint64(buf[offset:offset+8], enc_payload_len)
 	offset += 8
-	copy(buf[offset:offset+int(encrypted_payload_length)], g.EncryptedPayload)
-	offset += int(encrypted_payload_length)
+	copy(buf[offset:offset+int(enc_payload_len)], g.EncryptedPayload)
+	offset += int(enc_payload_len)
 
-	binary.BigEndian.PutUint64(buf[offset:offset+8], signature_length)
+	// 5. Signature
+	binary.BigEndian.PutUint64(buf[offset:offset+8], signature_len)
 	offset += 8
-	copy(buf[offset:offset+int(signature_length)], g.Signature)
-	offset += int(signature_length)
+	copy(buf[offset:offset+int(signature_len)], g.Signature)
+	offset += int(signature_len)
 
+	// 6. Checksum
 	checksum := crypt.Checksum(buf[:offset])
 	copy(buf[offset:offset+16], checksum[:])
 
 	return buf, nil
 }
 
-// UnmarshalBinary deserializes binary data into the GeneralRequest struct.
-// It validates input length, verifies the trailing checksum immediately to fail fast,
-// and then parses the payload checking for underflow.
 func (g *GeneralRequest) UnmarshalBinary(data []byte) error {
-	const minSize = 56 // (8 * 5) + 16
-	if len(data) < minSize {
+	// Min size: 1 (type) + 16 (session_id) + 8 (nonce) + 8*2 (lengths) + 16 (checksum) = 57 bytes
+	const min_size = 1 + 16 + 8 + 16 + 16
+	if len(data) < min_size {
 		return errors.New("protocol: data too short for GeneralRequest")
 	}
 
@@ -111,58 +77,60 @@ func (g *GeneralRequest) UnmarshalBinary(data []byte) error {
 
 	expected_checksum := crypt.Checksum(data[:payload_length])
 	if received_checksum != expected_checksum {
-		return errors.New("protocol: checksum mismatch")
+		return errors.New("protocol: checksum mismatch in GeneralRequest")
 	}
 
 	offset := 0
 
-	session_id_length := binary.BigEndian.Uint64(data[offset : offset+8])
-	offset += 8
-	if offset+int(session_id_length) > payload_length {
+	// 1. MessageType
+	msg_type := data[offset]
+	offset += 1
+	if msg_type != shared.MSG_GENERAL_REQ {
+		return errors.New("protocol: invalid MessageType for GeneralRequest")
+	}
+
+	// 2. SessionID (Fixed 16 bytes)
+	if offset+16 > payload_length {
 		return errors.New("protocol: underflow reading SessionID")
 	}
-	g.SessionID = make([]byte, session_id_length)
-	copy(g.SessionID, data[offset:offset+int(session_id_length)])
-	offset += int(session_id_length)
+	copy(g.SessionID[:], data[offset:offset+16])
+	offset += 16
 
-	session_token_length := binary.BigEndian.Uint64(data[offset : offset+8])
-	offset += 8
-	if offset+int(session_token_length) > payload_length {
-		return errors.New("protocol: underflow reading SessionToken")
-	}
-	g.SessionToken = make([]byte, session_token_length)
-	copy(g.SessionToken, data[offset:offset+int(session_token_length)])
-	offset += int(session_token_length)
-
-	nonce_length := binary.BigEndian.Uint64(data[offset : offset+8])
-	offset += 8
-	if offset+int(nonce_length) > payload_length {
+	// 3. Nonce (Fixed 8 bytes)
+	if offset+8 > payload_length {
 		return errors.New("protocol: underflow reading Nonce")
 	}
-	g.Nonce = make([]byte, nonce_length)
-	copy(g.Nonce, data[offset:offset+int(nonce_length)])
-	offset += int(nonce_length)
-
-	encrypted_payload_length := binary.BigEndian.Uint64(data[offset : offset+8])
+	g.Nonce = binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(encrypted_payload_length) > payload_length {
-		return errors.New("protocol: underflow reading EncryptedPayload")
-	}
-	g.EncryptedPayload = make([]byte, encrypted_payload_length)
-	copy(g.EncryptedPayload, data[offset:offset+int(encrypted_payload_length)])
-	offset += int(encrypted_payload_length)
 
-	signature_length := binary.BigEndian.Uint64(data[offset : offset+8])
-	offset += 8
-	if offset+int(signature_length) > payload_length {
-		return errors.New("protocol: underflow reading Signature")
+	// 4. EncryptedPayload
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading EncryptedPayload length")
 	}
-	g.Signature = make([]byte, signature_length)
-	copy(g.Signature, data[offset:offset+int(signature_length)])
-	offset += int(signature_length)
+	enc_payload_len := binary.BigEndian.Uint64(data[offset : offset+8])
+	offset += 8
+	if offset+int(enc_payload_len) > payload_length {
+		return errors.New("protocol: underflow reading EncryptedPayload data")
+	}
+	g.EncryptedPayload = make([]byte, enc_payload_len)
+	copy(g.EncryptedPayload, data[offset:offset+int(enc_payload_len)])
+	offset += int(enc_payload_len)
+
+	// 5. Signature
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading Signature length")
+	}
+	signature_len := binary.BigEndian.Uint64(data[offset : offset+8])
+	offset += 8
+	if offset+int(signature_len) > payload_length {
+		return errors.New("protocol: underflow reading Signature data")
+	}
+	g.Signature = make([]byte, signature_len)
+	copy(g.Signature, data[offset:offset+int(signature_len)])
+	offset += int(signature_len)
 
 	if offset != payload_length {
-		return errors.New("protocol: unexpected trailing data in payload")
+		return errors.New("protocol: unexpected trailing data in GeneralRequest")
 	}
 
 	return nil

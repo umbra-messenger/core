@@ -5,64 +5,89 @@ import (
 	"errors"
 
 	"github.com/umbra-messenger/core/internal/crypt"
+	"github.com/umbra-messenger/core/internal/shared"
 )
 
-// HandshakeChallenge represents the server's response to HandshakeInit.
+// HandshakeChallenge is the server's response to HandshakeInit.
 type HandshakeChallenge struct {
-	SessionID         []byte
+	// SessionID is the 16-byte unique identifier for this session attempt.
+	SessionID [16]byte
+	// ExchangePublicKey is the server's ephemeral X25519 public key for this session.
 	ExchangePublicKey []byte
-	SigningPublicKey  []byte
-	EncryptedPayload  []byte
-	Signature         []byte
+	// SigningPublicKey is the server's ephemeral Ed25519 public key for this session.
+	SigningPublicKey []byte
+	// EncryptedSessionPuzzle holds the serialized EncryptedPackage containing the puzzle and encrypted token.
+	EncryptedSessionPuzzle []byte
+	// SessionCookie is the AEAD-encrypted server state blob to prevent state-exhaustion DoS.
+	SessionCookie []byte
+	// Signature is the server's signature over the preceding payload.
+	Signature []byte
 }
 
-func (c *HandshakeChallenge) MarshalBinary() ([]byte, error) {
-	if c.SessionID == nil || c.ExchangePublicKey == nil || c.SigningPublicKey == nil || c.EncryptedPayload == nil || c.Signature == nil {
-		return nil, errors.New("protocol: HandshakeChallenge fields cannot be nil")
+func (h *HandshakeChallenge) MarshalBinary() ([]byte, error) {
+	if h.ExchangePublicKey == nil || h.SigningPublicKey == nil || h.EncryptedSessionPuzzle == nil || h.SessionCookie == nil || h.Signature == nil {
+		return nil, errors.New("protocol: HandshakeChallenge contains nil slices")
 	}
-	len_sid := uint64(len(c.SessionID))
-	len_exch := uint64(len(c.ExchangePublicKey))
-	len_sign := uint64(len(c.SigningPublicKey))
-	len_enc := uint64(len(c.EncryptedPayload))
-	len_sig := uint64(len(c.Signature))
 
-	total_size := 8 + int(len_sid) + 8 + int(len_exch) + 8 + int(len_sign) + 8 + int(len_enc) + 8 + int(len_sig) + 16
+	exchange_pub_len := uint64(len(h.ExchangePublicKey))
+	signing_pub_len := uint64(len(h.SigningPublicKey))
+	enc_puzzle_len := uint64(len(h.EncryptedSessionPuzzle))
+	cookie_len := uint64(len(h.SessionCookie))
+	signature_len := uint64(len(h.Signature))
+
+	// 1 (type) + 16 (session_id) + 5*(8 (len) + data) + 16 (checksum)
+	total_size := 1 + 16 + 8 + int(exchange_pub_len) + 8 + int(signing_pub_len) + 8 + int(enc_puzzle_len) + 8 + int(cookie_len) + 8 + int(signature_len) + 16
 	buf := make([]byte, total_size)
 	offset := 0
 
-	binary.BigEndian.PutUint64(buf[offset:offset+8], len_sid)
-	offset += 8
-	copy(buf[offset:offset+int(len_sid)], c.SessionID)
-	offset += int(len_sid)
+	// 1. MessageType (Wire-format)
+	buf[offset] = shared.MSG_HANDSHAKE_CHALLENGE
+	offset += 1
 
-	binary.BigEndian.PutUint64(buf[offset:offset+8], len_exch)
-	offset += 8
-	copy(buf[offset:offset+int(len_exch)], c.ExchangePublicKey)
-	offset += int(len_exch)
+	// 2. SessionID (Fixed 16 bytes)
+	copy(buf[offset:offset+16], h.SessionID[:])
+	offset += 16
 
-	binary.BigEndian.PutUint64(buf[offset:offset+8], len_sign)
+	// 3. ExchangePublicKey
+	binary.BigEndian.PutUint64(buf[offset:offset+8], exchange_pub_len)
 	offset += 8
-	copy(buf[offset:offset+int(len_sign)], c.SigningPublicKey)
-	offset += int(len_sign)
+	copy(buf[offset:offset+int(exchange_pub_len)], h.ExchangePublicKey)
+	offset += int(exchange_pub_len)
 
-	binary.BigEndian.PutUint64(buf[offset:offset+8], len_enc)
+	// 4. SigningPublicKey
+	binary.BigEndian.PutUint64(buf[offset:offset+8], signing_pub_len)
 	offset += 8
-	copy(buf[offset:offset+int(len_enc)], c.EncryptedPayload)
-	offset += int(len_enc)
+	copy(buf[offset:offset+int(signing_pub_len)], h.SigningPublicKey)
+	offset += int(signing_pub_len)
 
-	binary.BigEndian.PutUint64(buf[offset:offset+8], len_sig)
+	// 5. EncryptedSessionPuzzle
+	binary.BigEndian.PutUint64(buf[offset:offset+8], enc_puzzle_len)
 	offset += 8
-	copy(buf[offset:offset+int(len_sig)], c.Signature)
-	offset += int(len_sig)
+	copy(buf[offset:offset+int(enc_puzzle_len)], h.EncryptedSessionPuzzle)
+	offset += int(enc_puzzle_len)
 
+	// 6. SessionCookie
+	binary.BigEndian.PutUint64(buf[offset:offset+8], cookie_len)
+	offset += 8
+	copy(buf[offset:offset+int(cookie_len)], h.SessionCookie)
+	offset += int(cookie_len)
+
+	// 7. Signature
+	binary.BigEndian.PutUint64(buf[offset:offset+8], signature_len)
+	offset += 8
+	copy(buf[offset:offset+int(signature_len)], h.Signature)
+	offset += int(signature_len)
+
+	// 8. Checksum
 	checksum := crypt.Checksum(buf[:offset])
 	copy(buf[offset:offset+16], checksum[:])
 
 	return buf, nil
 }
 
-func (c *HandshakeChallenge) UnmarshalBinary(data []byte) error {
-	const min_size = 8 + 8 + 8 + 8 + 8 + 16 // 56 bytes
+func (h *HandshakeChallenge) UnmarshalBinary(data []byte) error {
+	// Min size: 1 (type) + 16 (session_id) + 5*8 (lengths) + 16 (checksum) = 73 bytes
+	const min_size = 1 + 16 + 40 + 16
 	if len(data) < min_size {
 		return errors.New("protocol: data too short for HandshakeChallenge")
 	}
@@ -71,58 +96,95 @@ func (c *HandshakeChallenge) UnmarshalBinary(data []byte) error {
 	var received_checksum [16]byte
 	copy(received_checksum[:], data[payload_length:])
 
-	if received_checksum != crypt.Checksum(data[:payload_length]) {
-		return errors.New("protocol: checksum mismatch")
+	expected_checksum := crypt.Checksum(data[:payload_length])
+	if received_checksum != expected_checksum {
+		return errors.New("protocol: checksum mismatch in HandshakeChallenge")
 	}
 
 	offset := 0
-	len_sid := binary.BigEndian.Uint64(data[offset : offset+8])
-	offset += 8
-	if offset+int(len_sid) > payload_length {
+
+	// 1. MessageType
+	msg_type := data[offset]
+	offset += 1
+	if msg_type != shared.MSG_HANDSHAKE_CHALLENGE {
+		return errors.New("protocol: invalid MessageType for HandshakeChallenge")
+	}
+
+	// 2. SessionID (Fixed 16 bytes)
+	if offset+16 > payload_length {
 		return errors.New("protocol: underflow reading SessionID")
 	}
-	c.SessionID = make([]byte, len_sid)
-	copy(c.SessionID, data[offset:offset+int(len_sid)])
-	offset += int(len_sid)
+	copy(h.SessionID[:], data[offset:offset+16])
+	offset += 16
 
-	len_exch := binary.BigEndian.Uint64(data[offset : offset+8])
-	offset += 8
-	if offset+int(len_exch) > payload_length {
-		return errors.New("protocol: underflow reading ExchangePublicKey")
+	// 3. ExchangePublicKey
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading ExchangePublicKey length")
 	}
-	c.ExchangePublicKey = make([]byte, len_exch)
-	copy(c.ExchangePublicKey, data[offset:offset+int(len_exch)])
-	offset += int(len_exch)
+	exchange_pub_len := binary.BigEndian.Uint64(data[offset : offset+8])
+	offset += 8
+	if offset+int(exchange_pub_len) > payload_length {
+		return errors.New("protocol: underflow reading ExchangePublicKey data")
+	}
+	h.ExchangePublicKey = make([]byte, exchange_pub_len)
+	copy(h.ExchangePublicKey, data[offset:offset+int(exchange_pub_len)])
+	offset += int(exchange_pub_len)
 
-	len_sign := binary.BigEndian.Uint64(data[offset : offset+8])
-	offset += 8
-	if offset+int(len_sign) > payload_length {
-		return errors.New("protocol: underflow reading SigningPublicKey")
+	// 4. SigningPublicKey
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading SigningPublicKey length")
 	}
-	c.SigningPublicKey = make([]byte, len_sign)
-	copy(c.SigningPublicKey, data[offset:offset+int(len_sign)])
-	offset += int(len_sign)
+	signing_pub_len := binary.BigEndian.Uint64(data[offset : offset+8])
+	offset += 8
+	if offset+int(signing_pub_len) > payload_length {
+		return errors.New("protocol: underflow reading SigningPublicKey data")
+	}
+	h.SigningPublicKey = make([]byte, signing_pub_len)
+	copy(h.SigningPublicKey, data[offset:offset+int(signing_pub_len)])
+	offset += int(signing_pub_len)
 
-	len_enc := binary.BigEndian.Uint64(data[offset : offset+8])
-	offset += 8
-	if offset+int(len_enc) > payload_length {
-		return errors.New("protocol: underflow reading EncryptedPayload")
+	// 5. EncryptedSessionPuzzle
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading EncryptedSessionPuzzle length")
 	}
-	c.EncryptedPayload = make([]byte, len_enc)
-	copy(c.EncryptedPayload, data[offset:offset+int(len_enc)])
-	offset += int(len_enc)
+	enc_puzzle_len := binary.BigEndian.Uint64(data[offset : offset+8])
+	offset += 8
+	if offset+int(enc_puzzle_len) > payload_length {
+		return errors.New("protocol: underflow reading EncryptedSessionPuzzle data")
+	}
+	h.EncryptedSessionPuzzle = make([]byte, enc_puzzle_len)
+	copy(h.EncryptedSessionPuzzle, data[offset:offset+int(enc_puzzle_len)])
+	offset += int(enc_puzzle_len)
 
-	len_sig := binary.BigEndian.Uint64(data[offset : offset+8])
-	offset += 8
-	if offset+int(len_sig) > payload_length {
-		return errors.New("protocol: underflow reading Signature")
+	// 6. SessionCookie
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading SessionCookie length")
 	}
-	c.Signature = make([]byte, len_sig)
-	copy(c.Signature, data[offset:offset+int(len_sig)])
-	offset += int(len_sig)
+	cookie_len := binary.BigEndian.Uint64(data[offset : offset+8])
+	offset += 8
+	if offset+int(cookie_len) > payload_length {
+		return errors.New("protocol: underflow reading SessionCookie data")
+	}
+	h.SessionCookie = make([]byte, cookie_len)
+	copy(h.SessionCookie, data[offset:offset+int(cookie_len)])
+	offset += int(cookie_len)
+
+	// 7. Signature
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading Signature length")
+	}
+	signature_len := binary.BigEndian.Uint64(data[offset : offset+8])
+	offset += 8
+	if offset+int(signature_len) > payload_length {
+		return errors.New("protocol: underflow reading Signature data")
+	}
+	h.Signature = make([]byte, signature_len)
+	copy(h.Signature, data[offset:offset+int(signature_len)])
+	offset += int(signature_len)
 
 	if offset != payload_length {
-		return errors.New("protocol: unexpected trailing data in payload")
+		return errors.New("protocol: unexpected trailing data in HandshakeChallenge")
 	}
+
 	return nil
 }
