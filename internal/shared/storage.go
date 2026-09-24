@@ -1,9 +1,9 @@
 package shared
 
 type Storage interface {
-	Store(ctx string, key string, value []byte) error
-	Retrieve(ctx string, key string) ([]byte, error)
-	Delete(ctx string, key string) error
+	Store(ctx string, key []byte, value []byte) error
+	Retrieve(ctx string, key []byte) ([]byte, error)
+	Delete(ctx string, key []byte) error
 	IsSafe() bool
 	GetTempKey() []byte
 }

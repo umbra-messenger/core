@@ -14,18 +14,18 @@ type VerificationRequest struct {
 	SessionCookie []byte
 	// SessionTokenFound is the session_token encrypted with session_sym_key to prove possession.
 	SessionTokenFound []byte
-	// SessionSigningPublicKey is the client's derived Ed25519 public key for future GeneralRequest signatures.
-	SessionSigningPublicKey []byte
+	// SessionSigningPubKey is the client's derived Ed25519 public key for future GeneralRequest signatures.
+	SessionSigningPubKey []byte
 }
 
 func (v *VerificationRequest) MarshalBinary() ([]byte, error) {
-	if v.SessionCookie == nil || v.SessionTokenFound == nil || v.SessionSigningPublicKey == nil {
+	if v.SessionCookie == nil || v.SessionTokenFound == nil || v.SessionSigningPubKey == nil {
 		return nil, errors.New("protocol: VerificationRequest contains nil slices")
 	}
 
 	cookie_len := uint64(len(v.SessionCookie))
 	token_found_len := uint64(len(v.SessionTokenFound))
-	signing_pub_len := uint64(len(v.SessionSigningPublicKey))
+	signing_pub_len := uint64(len(v.SessionSigningPubKey))
 
 	// 1 (type) + 3*(8 (len) + data) + 16 (checksum)
 	total_size := 1 + 8 + int(cookie_len) + 8 + int(token_found_len) + 8 + int(signing_pub_len) + 16
@@ -51,7 +51,7 @@ func (v *VerificationRequest) MarshalBinary() ([]byte, error) {
 	// 4. SessionSigningPublicKey
 	binary.BigEndian.PutUint64(buf[offset:offset+8], signing_pub_len)
 	offset += 8
-	copy(buf[offset:offset+int(signing_pub_len)], v.SessionSigningPublicKey)
+	copy(buf[offset:offset+int(signing_pub_len)], v.SessionSigningPubKey)
 	offset += int(signing_pub_len)
 
 	// 5. Checksum
@@ -121,8 +121,8 @@ func (v *VerificationRequest) UnmarshalBinary(data []byte) error {
 	if offset+int(signing_pub_len) > payload_length {
 		return errors.New("protocol: underflow reading SessionSigningPublicKey data")
 	}
-	v.SessionSigningPublicKey = make([]byte, signing_pub_len)
-	copy(v.SessionSigningPublicKey, data[offset:offset+int(signing_pub_len)])
+	v.SessionSigningPubKey = make([]byte, signing_pub_len)
+	copy(v.SessionSigningPubKey, data[offset:offset+int(signing_pub_len)])
 	offset += int(signing_pub_len)
 
 	if offset != payload_length {
