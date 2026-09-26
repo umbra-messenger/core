@@ -2,7 +2,6 @@ package server
 
 import (
 	"encoding/binary"
-	"errors"
 
 	"github.com/umbra-messenger/core/internal/protocol"
 	"github.com/umbra-messenger/core/internal/shared"
@@ -75,7 +74,7 @@ func (s *Server) handle_general_req(data []byte) []byte {
 
 	// 6. Route Application Payload
 	app_opcode := app_payload[0]
-	app_response_payload, err := s.dispatch_app_request(session_state, app_opcode, app_payload)
+	app_response_payload, err := s.dispatch_app_request(req.SessionID, session_state, app_opcode, app_payload)
 	if err != nil {
 		// For now, unimplemented or unknown opcodes return UNKNOWN_MSG_TYPE
 		return s.build_error_response(shared.ERR_CODE_UNKNOWN_MSG_TYPE)
@@ -111,18 +110,4 @@ func (s *Server) handle_general_req(data []byte) []byte {
 	}
 
 	return final_response
-}
-
-func (s *Server) dispatch_app_request(session_state *SessionState, app_opcode uint8, payload []byte) ([]byte, error) {
-	switch app_opcode {
-	case shared.APP_OP_CREATE_USER:
-		return nil, errors.New("app opcode not implemented")
-	case shared.APP_OP_SYNC:
-		return nil, errors.New("app opcode not implemented")
-	case shared.APP_OP_KEYKEEPER_SUBMIT:
-		return nil, errors.New("app opcode not implemented")
-	// Additional APP_OP cases will be routed here in the next phase
-	default:
-		return nil, errors.New("unknown app opcode")
-	}
 }
