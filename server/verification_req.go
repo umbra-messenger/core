@@ -64,7 +64,7 @@ func (s *Server) handle_verification_req(data []byte) []byte {
 		ClientSigningPubKey:  client_signing_pub,
 		HighestSeenNonce:     0,
 		IsEstablished:        true,
-	}
+	} // updates on step 5 below
 
 	state_bytes, err := session_state.MarshalBinary()
 	if err != nil {
@@ -76,8 +76,26 @@ func (s *Server) handle_verification_req(data []byte) []byte {
 		return s.build_error_response(shared.ERR_CODE_INTERNAL_SERVER)
 	}
 
-	// 5. Build VerificationResponse containing the new Session ID
-	ver_res := &protocol.VerificationResponse{SessionID: session_id}
+	// 5. Generate Initial Login Brake
+	initial_brake, initial_cookie, initial_timestamp, err := s.generate_login_brake(1)
+	if err != nil {
+		return s.build_error_response(shared.ERR_CODE_INTERNAL_SERVER)
+	}
+
+	// Update session with brake metadata
+	session_state.LoginBrakeVersion = 0
+	session_state.LoginBrakeTimestamp = initial_timestamp
+
+	if err := s.store_session_state(session_id, session_state); err != nil {
+		return s.build_error_response(shared.ERR_CODE_INTERNAL_SERVER)
+	}
+
+	// 6. Build VerificationResponse containing SessionID and Login Brake
+	ver_res := &protocol.VerificationResponse{
+		SessionID:        session_id,
+		LoginBrake:       initial_brake,
+		LoginBrakeCookie: initial_cookie,
+	}
 	ver_res_bytes, err := ver_res.MarshalBinary()
 	if err != nil {
 		return s.build_error_response(shared.ERR_CODE_INTERNAL_SERVER)
@@ -95,13 +113,11 @@ func (s *Server) handle_verification_req(data []byte) []byte {
 		return s.build_error_response(shared.ERR_CODE_INTERNAL_SERVER)
 	}
 
-	// Sign the encrypted payload with Server's Private Key
 	sig, err := s.crypt.Sign(shared.CTX_SERVER_SESSION_SIGNING, enc_payload_bytes, server_signing_priv)
 	if err != nil {
 		return s.build_error_response(shared.ERR_CODE_INTERNAL_SERVER)
 	}
 
-	// Wrap in GeneralResponse envelope
 	res := &protocol.GeneralResponse{
 		EncryptedPayload: enc_payload_bytes,
 		Signature:        sig,

@@ -21,6 +21,8 @@ const (
 	CTX_DUMMY_PUB_KEY          = "umbra.dummy.pub_key"
 	CTX_USER_REGISTRATION_POW  = "umbra.user.registration_pow"
 	CTX_USER_REGISTRATION      = "umbra.user.registration_auth"
+	CTX_LOGIN_BRAKE_COOKIE     = "umbra.login_brake.cookie_aead"
+	CTX_LOGIN_BRAKE_POW        = "umbra.login_brake.pow_hash"
 )
 
 // Storage contexts (STORE_CTX_*) tell the Host the logical category of stored data.
@@ -46,6 +48,9 @@ const (
 	PERSONAL_NOTE_MAX_SIZE                = 65536
 	USERNAME_DISCRIMINATOR_MAX_TRIES      = 7
 	USER_REGISTRATION_POW_DIFFICULTY_BITS = 6
+	LOGIN_BRAKE_LEN                       = 32
+	LOGIN_BRAKE_POW_DIFFICULTY_BITS       = 8
+	LOGIN_BRAKE_SKIP_THRESHOLD_SECONDS    = 3600
 )
 
 // Message Types (uint8) for Server routing.
@@ -91,4 +96,10 @@ const (
 	ERR_CODE_PUZZLE_UNSOLVED   uint16 = 02004
 	ERR_CODE_INVALID_KEY       uint16 = 02005
 	ERR_CODE_INTERNAL_SERVER   uint16 = 05000
+)
+
+const (
+	// Application response status codes
+	APP_STATUS_SUCCESS      uint8 = 0
+	APP_STATUS_BRAKE_ROTATE uint8 = 1
 )

@@ -16,7 +16,7 @@ func (s *Server) handle_app_destroy_session(session_id [16]byte, session_state *
 	}
 
 	res := &protocol.DestroySessionResponse{
-		StatusCode: 0,
+		StatusCode: shared.APP_STATUS_SUCCESS,
 	}
 	return res.MarshalBinary()
 }

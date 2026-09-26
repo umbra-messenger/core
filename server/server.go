@@ -13,14 +13,16 @@ type Server struct {
 	crypt      crypt.CryptoSuite
 	cookie_key [32]byte
 	dummy_salt [32]byte
+	time_func  func() uint64
 }
 
-func NewServer(storage shared.Storage, crypt crypt.CryptoSuite, cookie_key [32]byte, dummy_salt [32]byte) *Server {
+func NewServer(storage shared.Storage, crypt crypt.CryptoSuite, cookie_key [32]byte, dummy_salt [32]byte, time_func func() uint64) *Server {
 	return &Server{
 		storage:    storage,
 		crypt:      crypt,
 		cookie_key: cookie_key,
 		dummy_salt: dummy_salt,
+		time_func:  time_func,
 	}
 }
 
