@@ -58,12 +58,15 @@ func (l *LoginBrakeCookie) UnmarshalBinary(data []byte) error {
 
 	offset := 0
 
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading LoginBrake length")
+	}
 	brake_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(brake_len) > payload_length {
+	if brake_len > uint64(payload_length-offset) {
 		return errors.New("protocol: underflow reading LoginBrake data")
 	}
-	l.LoginBrake = make([]byte, brake_len)
+	l.LoginBrake = make([]byte, int(brake_len))
 	copy(l.LoginBrake, data[offset:offset+int(brake_len)])
 	offset += int(brake_len)
 

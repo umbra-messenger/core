@@ -14,4 +14,9 @@ var (
 	ErrReplayAttack     = errors.New("protocol: nonce replay detected")
 	ErrPuzzleUnsolved   = errors.New("protocol: handshake puzzle unsolved")
 	ErrInvalidKey       = errors.New("protocol: invalid cryptographic key")
+
+	// ErrNotFound is returned by Storage.Retrieve when the requested key does
+	// not exist. Hosts MUST return this sentinel (or wrap it) rather than a
+	// generic error, so callers can distinguish "absent" from "backend failure".
+	ErrNotFound = errors.New("storage: key not found")
 )

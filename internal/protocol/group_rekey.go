@@ -24,36 +24,29 @@ func (g *GroupRekeyRequest) MarshalBinary() ([]byte, error) {
 	new_group_pub_len := uint64(len(g.NewGroupPublicKey))
 	admin_sig_len := uint64(len(g.AdminSignature))
 
-	// 1 (op) + 16 (group_id) + 8 (version) + 8 (len1) + data1 + 8 (len2) + data2 + 16 (checksum)
 	total_size := 1 + 16 + 8 + 8 + int(new_group_pub_len) + 8 + int(admin_sig_len) + 16
 	buf := make([]byte, total_size)
 	offset := 0
 
-	// 1. App OpCode
 	buf[offset] = shared.APP_OP_GROUP_REKEY
 	offset += 1
 
-	// 2. GroupID
 	copy(buf[offset:offset+16], g.GroupID[:])
 	offset += 16
 
-	// 3. GroupVersion
 	binary.BigEndian.PutUint64(buf[offset:offset+8], g.GroupVersion)
 	offset += 8
 
-	// 4. NewGroupPublicKey
 	binary.BigEndian.PutUint64(buf[offset:offset+8], new_group_pub_len)
 	offset += 8
 	copy(buf[offset:offset+int(new_group_pub_len)], g.NewGroupPublicKey)
 	offset += int(new_group_pub_len)
 
-	// 5. AdminSignature
 	binary.BigEndian.PutUint64(buf[offset:offset+8], admin_sig_len)
 	offset += 8
 	copy(buf[offset:offset+int(admin_sig_len)], g.AdminSignature)
 	offset += int(admin_sig_len)
 
-	// 6. Checksum
 	checksum := crypt.Checksum(buf[:offset])
 	copy(buf[offset:offset+16], checksum[:])
 
@@ -78,50 +71,45 @@ func (g *GroupRekeyRequest) UnmarshalBinary(data []byte) error {
 
 	offset := 0
 
-	// 1. App OpCode
 	app_op := data[offset]
 	offset += 1
 	if app_op != shared.APP_OP_GROUP_REKEY {
 		return errors.New("protocol: invalid App OpCode for GroupRekeyRequest")
 	}
 
-	// 2. GroupID
 	if offset+16 > payload_length {
 		return errors.New("protocol: underflow reading GroupID")
 	}
 	copy(g.GroupID[:], data[offset:offset+16])
 	offset += 16
 
-	// 3. GroupVersion
 	if offset+8 > payload_length {
 		return errors.New("protocol: underflow reading GroupVersion")
 	}
 	g.GroupVersion = binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
 
-	// 4. NewGroupPublicKey
 	if offset+8 > payload_length {
 		return errors.New("protocol: underflow reading NewGroupPublicKey length")
 	}
 	new_group_pub_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(new_group_pub_len) > payload_length {
+	if new_group_pub_len > uint64(payload_length-offset) {
 		return errors.New("protocol: underflow reading NewGroupPublicKey data")
 	}
-	g.NewGroupPublicKey = make([]byte, new_group_pub_len)
+	g.NewGroupPublicKey = make([]byte, int(new_group_pub_len))
 	copy(g.NewGroupPublicKey, data[offset:offset+int(new_group_pub_len)])
 	offset += int(new_group_pub_len)
 
-	// 5. AdminSignature
 	if offset+8 > payload_length {
 		return errors.New("protocol: underflow reading AdminSignature length")
 	}
 	admin_sig_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(admin_sig_len) > payload_length {
+	if admin_sig_len > uint64(payload_length-offset) {
 		return errors.New("protocol: underflow reading AdminSignature data")
 	}
-	g.AdminSignature = make([]byte, admin_sig_len)
+	g.AdminSignature = make([]byte, int(admin_sig_len))
 	copy(g.AdminSignature, data[offset:offset+int(admin_sig_len)])
 	offset += int(admin_sig_len)
 
@@ -177,9 +165,6 @@ func (g *GroupRekeyResponse) UnmarshalBinary(data []byte) error {
 		return errors.New("protocol: invalid App OpCode for GroupRekeyResponse")
 	}
 
-	if offset+1 > payload_length {
-		return errors.New("protocol: underflow reading StatusCode")
-	}
 	g.StatusCode = data[offset]
 	offset += 1
 

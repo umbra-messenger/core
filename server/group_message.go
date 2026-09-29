@@ -49,7 +49,7 @@ func (g *GroupMessage) MarshalBinary() ([]byte, error) {
 }
 
 func (g *GroupMessage) UnmarshalBinary(data []byte) error {
-	// Min size: 16 + 8 + 8 + 8 + 16 = 56 bytes
+	// Min size: 16 (id) + 8 (len) + 8 (ts) + 8 (version) + 16 (checksum) = 56 bytes
 	const min_size = 56
 	if len(data) < min_size {
 		return errors.New("server: data too short for GroupMessage")
@@ -69,12 +69,15 @@ func (g *GroupMessage) UnmarshalBinary(data []byte) error {
 	copy(g.MessageID[:], data[offset:offset+16])
 	offset += 16
 
+	if offset+8 > payload_length {
+		return errors.New("server: underflow reading EncryptedMessage length")
+	}
 	enc_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(enc_len) > payload_length {
-		return errors.New("server: underflow reading EncryptedMessage")
+	if enc_len > uint64(payload_length-offset) {
+		return errors.New("server: underflow reading EncryptedMessage data")
 	}
-	g.EncryptedMessage = make([]byte, enc_len)
+	g.EncryptedMessage = make([]byte, int(enc_len))
 	copy(g.EncryptedMessage, data[offset:offset+int(enc_len)])
 	offset += int(enc_len)
 

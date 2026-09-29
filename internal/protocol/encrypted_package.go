@@ -60,14 +60,18 @@ func (e *EncryptedPackage) UnmarshalBinary(data []byte) error {
 	copy(e.Nonce[:], data[offset:offset+12])
 	offset += 12
 
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading Ciphertext length")
+	}
 	ciphertext_length := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
 
-	if offset+int(ciphertext_length)+16 > payload_length {
+	// Minimum 16-byte tag must remain after the ciphertext.
+	if ciphertext_length > uint64(payload_length-offset-16) {
 		return errors.New("protocol: underflow reading Ciphertext and Tag")
 	}
 
-	e.Ciphertext = make([]byte, ciphertext_length)
+	e.Ciphertext = make([]byte, int(ciphertext_length))
 	copy(e.Ciphertext, data[offset:offset+int(ciphertext_length)])
 	offset += int(ciphertext_length)
 

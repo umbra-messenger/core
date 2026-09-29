@@ -48,7 +48,7 @@ func (v *VerificationResponse) MarshalBinary() ([]byte, error) {
 }
 
 func (v *VerificationResponse) UnmarshalBinary(data []byte) error {
-	// Min size: 16 + 8 + 8 + 16 = 48 bytes
+	// Min size: 16 (id) + 8 (len1) + 8 (len2) + 16 (checksum) = 48 bytes
 	const min_size = 48
 	if len(data) < min_size {
 		return errors.New("protocol: data too short for VerificationResponse")
@@ -68,21 +68,27 @@ func (v *VerificationResponse) UnmarshalBinary(data []byte) error {
 	copy(v.SessionID[:], data[offset:offset+16])
 	offset += 16
 
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading LoginBrake length")
+	}
 	brake_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(brake_len) > payload_length {
+	if brake_len > uint64(payload_length-offset) {
 		return errors.New("protocol: underflow reading LoginBrake data")
 	}
-	v.LoginBrake = make([]byte, brake_len)
+	v.LoginBrake = make([]byte, int(brake_len))
 	copy(v.LoginBrake, data[offset:offset+int(brake_len)])
 	offset += int(brake_len)
 
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading LoginBrakeCookie length")
+	}
 	cookie_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(cookie_len) > payload_length {
+	if cookie_len > uint64(payload_length-offset) {
 		return errors.New("protocol: underflow reading LoginBrakeCookie data")
 	}
-	v.LoginBrakeCookie = make([]byte, cookie_len)
+	v.LoginBrakeCookie = make([]byte, int(cookie_len))
 	copy(v.LoginBrakeCookie, data[offset:offset+int(cookie_len)])
 	offset += int(cookie_len)
 

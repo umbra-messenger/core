@@ -90,33 +90,63 @@ func (h *HandshakeChallenge) UnmarshalBinary(data []byte) error {
 		return errors.New("protocol: invalid MessageType for HandshakeChallenge")
 	}
 
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading KemCiphertext length")
+	}
 	kem_ct_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	h.KemCiphertext = make([]byte, kem_ct_len)
+	if kem_ct_len > uint64(payload_length-offset) {
+		return errors.New("protocol: underflow reading KemCiphertext data")
+	}
+	h.KemCiphertext = make([]byte, int(kem_ct_len))
 	copy(h.KemCiphertext, data[offset:offset+int(kem_ct_len)])
 	offset += int(kem_ct_len)
 
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading SessionSigningPubKey length")
+	}
 	sig_pub_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	h.SessionSigningPubKey = make([]byte, sig_pub_len)
+	if sig_pub_len > uint64(payload_length-offset) {
+		return errors.New("protocol: underflow reading SessionSigningPubKey data")
+	}
+	h.SessionSigningPubKey = make([]byte, int(sig_pub_len))
 	copy(h.SessionSigningPubKey, data[offset:offset+int(sig_pub_len)])
 	offset += int(sig_pub_len)
 
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading EncryptedSessionPuzzle length")
+	}
 	puzzle_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	h.EncryptedSessionPuzzle = make([]byte, puzzle_len)
+	if puzzle_len > uint64(payload_length-offset) {
+		return errors.New("protocol: underflow reading EncryptedSessionPuzzle data")
+	}
+	h.EncryptedSessionPuzzle = make([]byte, int(puzzle_len))
 	copy(h.EncryptedSessionPuzzle, data[offset:offset+int(puzzle_len)])
 	offset += int(puzzle_len)
 
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading SessionCookie length")
+	}
 	cookie_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	h.SessionCookie = make([]byte, cookie_len)
+	if cookie_len > uint64(payload_length-offset) {
+		return errors.New("protocol: underflow reading SessionCookie data")
+	}
+	h.SessionCookie = make([]byte, int(cookie_len))
 	copy(h.SessionCookie, data[offset:offset+int(cookie_len)])
 	offset += int(cookie_len)
 
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading Signature length")
+	}
 	sig_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	h.Signature = make([]byte, sig_len)
+	if sig_len > uint64(payload_length-offset) {
+		return errors.New("protocol: underflow reading Signature data")
+	}
+	h.Signature = make([]byte, int(sig_len))
 	copy(h.Signature, data[offset:offset+int(sig_len)])
 	offset += int(sig_len)
 

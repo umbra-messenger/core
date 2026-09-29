@@ -9,6 +9,9 @@ import (
 )
 
 // SyncGroupRequest represents a request to sync messages for a specific group.
+// SinceTimestamp is the timestamp of the last message the client has fully
+// processed. The server returns messages with Timestamp strictly greater than
+// this value.
 type SyncGroupRequest struct {
 	GroupID        [16]byte
 	SinceTimestamp uint64
@@ -31,15 +34,12 @@ func (s *SyncRequest) MarshalBinary() ([]byte, error) {
 	buf := make([]byte, total_size)
 	offset := 0
 
-	// 1. App OpCode
 	buf[offset] = shared.APP_OP_SYNC
 	offset += 1
 
-	// 2. Groups Count
 	binary.BigEndian.PutUint64(buf[offset:offset+8], groups_count)
 	offset += 8
 
-	// 3. Groups Data
 	for i := 0; i < len(s.Groups); i++ {
 		group := &s.Groups[i]
 
@@ -50,7 +50,6 @@ func (s *SyncRequest) MarshalBinary() ([]byte, error) {
 		offset += 8
 	}
 
-	// 4. Checksum
 	checksum := crypt.Checksum(buf[:offset])
 	copy(buf[offset:offset+16], checksum[:])
 
@@ -75,21 +74,20 @@ func (s *SyncRequest) UnmarshalBinary(data []byte) error {
 
 	offset := 0
 
-	// 1. App OpCode
 	app_op := data[offset]
 	offset += 1
 	if app_op != shared.APP_OP_SYNC {
 		return errors.New("protocol: invalid App OpCode for SyncRequest")
 	}
 
-	// 2. Groups Count
-	if offset+8 > payload_length {
-		return errors.New("protocol: underflow reading Groups count")
-	}
 	groups_count := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
+	// Each SyncGroupRequest is exactly 24 bytes (16 + 8).
+	if groups_count > uint64(payload_length-offset)/24 {
+		return errors.New("protocol: SyncRequest group count exceeds payload size")
+	}
 
-	s.Groups = make([]SyncGroupRequest, groups_count)
+	s.Groups = make([]SyncGroupRequest, int(groups_count))
 	for i := uint64(0); i < groups_count; i++ {
 		group := &s.Groups[i]
 
@@ -144,7 +142,6 @@ func (s *SyncResponse) MarshalBinary() ([]byte, error) {
 		if group.Messages == nil {
 			group.Messages = []SyncedMessage{}
 		}
-		// 16 (group_id) + 8 (messages count)
 		groups_data_size += 16 + 8
 
 		for j := 0; j < len(group.Messages); j++ {
@@ -152,29 +149,23 @@ func (s *SyncResponse) MarshalBinary() ([]byte, error) {
 			if msg.EncryptedMessage == nil {
 				return nil, errors.New("protocol: SyncedMessage contains nil EncryptedMessage")
 			}
-			// 8 (len) + data + 8 (timestamp) + 8 (version)
 			groups_data_size += 8 + len(msg.EncryptedMessage) + 8 + 8
 		}
 	}
 
-	// 1 (op) + 1 (status) + 8 (count) + groups_data_size + 16 (checksum)
 	total_size := 1 + 1 + 8 + groups_data_size + 16
 	buf := make([]byte, total_size)
 	offset := 0
 
-	// 1. App OpCode
 	buf[offset] = shared.APP_OP_SYNC
 	offset += 1
 
-	// 2. StatusCode
 	buf[offset] = s.StatusCode
 	offset += 1
 
-	// 3. Groups Count
 	binary.BigEndian.PutUint64(buf[offset:offset+8], groups_count)
 	offset += 8
 
-	// 4. Groups Data
 	for i := 0; i < len(s.Groups); i++ {
 		group := &s.Groups[i]
 
@@ -202,7 +193,6 @@ func (s *SyncResponse) MarshalBinary() ([]byte, error) {
 		}
 	}
 
-	// 5. Checksum
 	checksum := crypt.Checksum(buf[:offset])
 	copy(buf[offset:offset+16], checksum[:])
 
@@ -227,28 +217,23 @@ func (s *SyncResponse) UnmarshalBinary(data []byte) error {
 
 	offset := 0
 
-	// 1. App OpCode
 	app_op := data[offset]
 	offset += 1
 	if app_op != shared.APP_OP_SYNC {
 		return errors.New("protocol: invalid App OpCode for SyncResponse")
 	}
 
-	// 2. StatusCode
-	if offset+1 > payload_length {
-		return errors.New("protocol: underflow reading StatusCode")
-	}
 	s.StatusCode = data[offset]
 	offset += 1
 
-	// 3. Groups Count
-	if offset+8 > payload_length {
-		return errors.New("protocol: underflow reading Groups count")
-	}
 	groups_count := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
+	// Each SyncGroupResponse is at least 16 (group_id) + 8 (message count) = 24 bytes.
+	if groups_count > uint64(payload_length-offset)/24 {
+		return errors.New("protocol: SyncResponse group count exceeds payload size")
+	}
 
-	s.Groups = make([]SyncGroupResponse, groups_count)
+	s.Groups = make([]SyncGroupResponse, int(groups_count))
 	for i := uint64(0); i < groups_count; i++ {
 		group := &s.Groups[i]
 
@@ -263,8 +248,12 @@ func (s *SyncResponse) UnmarshalBinary(data []byte) error {
 		}
 		messages_count := binary.BigEndian.Uint64(data[offset : offset+8])
 		offset += 8
+		// Each SyncedMessage is at least 8 (enc len) + 8 (ts) + 8 (version) = 24 bytes.
+		if messages_count > uint64(payload_length-offset)/24 {
+			return errors.New("protocol: SyncResponse message count exceeds payload size")
+		}
 
-		group.Messages = make([]SyncedMessage, messages_count)
+		group.Messages = make([]SyncedMessage, int(messages_count))
 		for j := uint64(0); j < messages_count; j++ {
 			msg := &group.Messages[j]
 
@@ -273,10 +262,10 @@ func (s *SyncResponse) UnmarshalBinary(data []byte) error {
 			}
 			enc_msg_len := binary.BigEndian.Uint64(data[offset : offset+8])
 			offset += 8
-			if offset+int(enc_msg_len) > payload_length {
+			if enc_msg_len > uint64(payload_length-offset) {
 				return errors.New("protocol: underflow reading EncryptedMessage data")
 			}
-			msg.EncryptedMessage = make([]byte, enc_msg_len)
+			msg.EncryptedMessage = make([]byte, int(enc_msg_len))
 			copy(msg.EncryptedMessage, data[offset:offset+int(enc_msg_len)])
 			offset += int(enc_msg_len)
 

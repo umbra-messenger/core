@@ -16,11 +16,9 @@ func (d *DestroySessionRequest) MarshalBinary() ([]byte, error) {
 	buf := make([]byte, total_size)
 	offset := 0
 
-	// 1. App OpCode
 	buf[offset] = shared.APP_OP_DESTROY_SESSION
 	offset += 1
 
-	// 2. Checksum
 	checksum := crypt.Checksum(buf[:offset])
 	copy(buf[offset:offset+16], checksum[:])
 
@@ -44,7 +42,6 @@ func (d *DestroySessionRequest) UnmarshalBinary(data []byte) error {
 
 	offset := 0
 
-	// 1. App OpCode
 	app_op := data[offset]
 	offset += 1
 	if app_op != shared.APP_OP_DESTROY_SESSION {
@@ -69,15 +66,12 @@ func (d *DestroySessionResponse) MarshalBinary() ([]byte, error) {
 	buf := make([]byte, total_size)
 	offset := 0
 
-	// 1. App OpCode
 	buf[offset] = shared.APP_OP_DESTROY_SESSION
 	offset += 1
 
-	// 2. StatusCode
 	buf[offset] = d.StatusCode
 	offset += 1
 
-	// 3. Checksum
 	checksum := crypt.Checksum(buf[:offset])
 	copy(buf[offset:offset+16], checksum[:])
 
@@ -101,14 +95,12 @@ func (d *DestroySessionResponse) UnmarshalBinary(data []byte) error {
 
 	offset := 0
 
-	// 1. App OpCode
 	app_op := data[offset]
 	offset += 1
 	if app_op != shared.APP_OP_DESTROY_SESSION {
 		return errors.New("protocol: invalid App OpCode for DestroySessionResponse")
 	}
 
-	// 2. StatusCode
 	if offset+1 > payload_length {
 		return errors.New("protocol: underflow reading StatusCode")
 	}

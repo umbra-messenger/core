@@ -65,21 +65,39 @@ func (u *UserRecord) UnmarshalBinary(data []byte) error {
 
 	offset := 0
 
+	if offset+8 > payload_length {
+		return errors.New("server: underflow reading EncryptedMasterKey length")
+	}
 	master_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	u.EncryptedMasterKey = make([]byte, master_len)
+	if master_len > uint64(payload_length-offset) {
+		return errors.New("server: underflow reading EncryptedMasterKey data")
+	}
+	u.EncryptedMasterKey = make([]byte, int(master_len))
 	copy(u.EncryptedMasterKey, data[offset:offset+int(master_len)])
 	offset += int(master_len)
 
+	if offset+8 > payload_length {
+		return errors.New("server: underflow reading SigningPub length")
+	}
 	sig_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	u.SigningPub = make([]byte, sig_len)
+	if sig_len > uint64(payload_length-offset) {
+		return errors.New("server: underflow reading SigningPub data")
+	}
+	u.SigningPub = make([]byte, int(sig_len))
 	copy(u.SigningPub, data[offset:offset+int(sig_len)])
 	offset += int(sig_len)
 
+	if offset+8 > payload_length {
+		return errors.New("server: underflow reading ExchangePub length")
+	}
 	ex_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	u.ExchangePub = make([]byte, ex_len)
+	if ex_len > uint64(payload_length-offset) {
+		return errors.New("server: underflow reading ExchangePub data")
+	}
+	u.ExchangePub = make([]byte, int(ex_len))
 	copy(u.ExchangePub, data[offset:offset+int(ex_len)])
 	offset += int(ex_len)
 

@@ -22,30 +22,24 @@ func (o *OwnerWipeRequest) MarshalBinary() ([]byte, error) {
 
 	owner_sig_len := uint64(len(o.OwnerSignature))
 
-	// 1 (op) + 16 (group_id) + 8 (version) + 8 (len) + data + 16 (checksum)
 	total_size := 1 + 16 + 8 + 8 + int(owner_sig_len) + 16
 	buf := make([]byte, total_size)
 	offset := 0
 
-	// 1. App OpCode
 	buf[offset] = shared.APP_OP_OWNER_WIPE
 	offset += 1
 
-	// 2. GroupID
 	copy(buf[offset:offset+16], o.GroupID[:])
 	offset += 16
 
-	// 3. GroupVersion
 	binary.BigEndian.PutUint64(buf[offset:offset+8], o.GroupVersion)
 	offset += 8
 
-	// 4. OwnerSignature
 	binary.BigEndian.PutUint64(buf[offset:offset+8], owner_sig_len)
 	offset += 8
 	copy(buf[offset:offset+int(owner_sig_len)], o.OwnerSignature)
 	offset += int(owner_sig_len)
 
-	// 5. Checksum
 	checksum := crypt.Checksum(buf[:offset])
 	copy(buf[offset:offset+16], checksum[:])
 
@@ -70,37 +64,33 @@ func (o *OwnerWipeRequest) UnmarshalBinary(data []byte) error {
 
 	offset := 0
 
-	// 1. App OpCode
 	app_op := data[offset]
 	offset += 1
 	if app_op != shared.APP_OP_OWNER_WIPE {
 		return errors.New("protocol: invalid App OpCode for OwnerWipeRequest")
 	}
 
-	// 2. GroupID
 	if offset+16 > payload_length {
 		return errors.New("protocol: underflow reading GroupID")
 	}
 	copy(o.GroupID[:], data[offset:offset+16])
 	offset += 16
 
-	// 3. GroupVersion
 	if offset+8 > payload_length {
 		return errors.New("protocol: underflow reading GroupVersion")
 	}
 	o.GroupVersion = binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
 
-	// 4. OwnerSignature
 	if offset+8 > payload_length {
 		return errors.New("protocol: underflow reading OwnerSignature length")
 	}
 	owner_sig_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(owner_sig_len) > payload_length {
+	if owner_sig_len > uint64(payload_length-offset) {
 		return errors.New("protocol: underflow reading OwnerSignature data")
 	}
-	o.OwnerSignature = make([]byte, owner_sig_len)
+	o.OwnerSignature = make([]byte, int(owner_sig_len))
 	copy(o.OwnerSignature, data[offset:offset+int(owner_sig_len)])
 	offset += int(owner_sig_len)
 
@@ -156,9 +146,6 @@ func (o *OwnerWipeResponse) UnmarshalBinary(data []byte) error {
 		return errors.New("protocol: invalid App OpCode for OwnerWipeResponse")
 	}
 
-	if offset+1 > payload_length {
-		return errors.New("protocol: underflow reading StatusCode")
-	}
 	o.StatusCode = data[offset]
 	offset += 1
 

@@ -14,13 +14,29 @@ func (s *Server) handle_app_group_create(session_id [16]byte, session_state *Ses
 		return nil, err
 	}
 
-	// 1. Generate server-side GroupID
-	var group_id [shared.SESSION_ID_LEN]byte
+	// 1. Per-session rate limit. CAS-protected.
+	current_time := s.time_func()
+	gc_key := build_rate_limit_key("group_create", session_id[:])
+	allowed, err := s.cas_advance_timestamp(
+		shared.STORE_CTX_RATE_LIMIT,
+		gc_key,
+		current_time,
+		uint64(shared.GROUP_CREATE_MIN_INTERVAL_SECONDS),
+	)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, errors.New("group create rate limit exceeded")
+	}
+
+	// 2. Generate server-side GroupID.
+	var group_id [16]byte
 	if err := s.crypt.Rand(group_id[:]); err != nil {
 		return nil, err
 	}
 
-	// 2. Store GroupMetadata
+	// 3. Store GroupMetadata.
 	metadata := &GroupMetadata{
 		GroupPublicKey: req.GroupPublicKey,
 		AdminPublicKey: req.AdminPublicKey,
@@ -36,7 +52,7 @@ func (s *Server) handle_app_group_create(session_id [16]byte, session_state *Ses
 		return nil, err
 	}
 
-	// 3. Return GroupID
+	// 4. Return GroupID.
 	res := &protocol.GroupCreateResponse{
 		StatusCode: shared.APP_STATUS_SUCCESS,
 		GroupID:    group_id,

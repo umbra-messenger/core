@@ -24,43 +24,73 @@ func build_keykeeper_query_prefix(destination_username []byte) []byte {
 	return prefix
 }
 
+func build_rejected_keykeeper_submit_response() ([]byte, error) {
+	res := &protocol.KeyKeeperSubmitResponse{
+		StatusCode: shared.APP_STATUS_REJECTED,
+		RecordIDs:  [][16]byte{},
+	}
+	return res.MarshalBinary()
+}
+
 func (s *Server) handle_app_keykeeper_submit(session_id [16]byte, session_state *SessionState, payload []byte) ([]byte, error) {
 	req := &protocol.KeyKeeperSubmitRequest{}
 	if err := req.UnmarshalBinary(payload); err != nil {
 		return nil, err
 	}
 
-	// 1. Validate batch size
+	// 1. Validate batch size (defense-in-depth: UnmarshalBinary already enforces it).
 	if len(req.Records) > shared.KEYKEEPER_MAX_BATCH_SIZE {
-		res := &protocol.KeyKeeperSubmitResponse{
-			StatusCode: shared.APP_STATUS_BRAKE_ROTATE, // Reuse as generic rejection
-			RecordIDs:  [][16]byte{},
-		}
-		return res.MarshalBinary()
+		return build_rejected_keykeeper_submit_response()
 	}
 
-	// 2. Validate each record's encrypted payload size
+	// 2. Validate each record's encrypted payload size.
 	for i := 0; i < len(req.Records); i++ {
 		if len(req.Records[i].EncryptedPayload) > shared.KEYKEEPER_MAX_RECORD_SIZE {
-			res := &protocol.KeyKeeperSubmitResponse{
-				StatusCode: shared.APP_STATUS_BRAKE_ROTATE,
-				RecordIDs:  [][16]byte{},
-			}
-			return res.MarshalBinary()
+			return build_rejected_keykeeper_submit_response()
 		}
 	}
 
-	// 3. Per-session rate limit (1 batch per second)
 	current_time := s.time_func()
-	if current_time <= session_state.LastKeyKeeperSubmitTime {
-		res := &protocol.KeyKeeperSubmitResponse{
-			StatusCode: shared.APP_STATUS_BRAKE_ROTATE,
-			RecordIDs:  [][16]byte{},
-		}
-		return res.MarshalBinary()
+
+	// 3. Per-session rate limit (1 batch per second). CAS-protected so
+	//    concurrent requests from the same session cannot both pass.
+	session_key := build_rate_limit_key("kk_session", session_id[:])
+	allowed, err := s.cas_advance_timestamp(shared.STORE_CTX_RATE_LIMIT, session_key, current_time, 1)
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return build_rejected_keykeeper_submit_response()
 	}
 
-	// 4. Store all records
+	// 4. Per-destination rate limit. Each destination's quota is
+	//    incremented atomically. If any destination rejects, the batch is
+	//    rejected; earlier destinations that already advanced keep their
+	//    increment, which is acceptable for a soft rate limit.
+	dest_counts := make(map[string]uint64)
+	for i := 0; i < len(req.Records); i++ {
+		dest_counts[string(req.Records[i].DestinationUsername)]++
+	}
+
+	for dest, add_count := range dest_counts {
+		dst_key := build_rate_limit_key("kk_dst", []byte(dest))
+		allowed, err := s.cas_accumulate_quota(
+			shared.STORE_CTX_RATE_LIMIT,
+			dst_key,
+			add_count,
+			uint64(shared.KEYKEEPER_DST_RATE_LIMIT_MAX),
+			uint64(shared.KEYKEEPER_DST_RATE_LIMIT_WINDOW_SECS),
+			current_time,
+		)
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
+			return build_rejected_keykeeper_submit_response()
+		}
+	}
+
+	// 5. Store all records.
 	record_ids := make([][16]byte, len(req.Records))
 	for i := 0; i < len(req.Records); i++ {
 		rec := &req.Records[i]
@@ -92,12 +122,6 @@ func (s *Server) handle_app_keykeeper_submit(session_id [16]byte, session_state 
 		record_ids[i] = record_id
 	}
 
-	// 5. Update session rate limit timestamp
-	session_state.LastKeyKeeperSubmitTime = current_time
-	if err := s.store_session_state(session_id, session_state); err != nil {
-		return nil, err
-	}
-
 	res := &protocol.KeyKeeperSubmitResponse{
 		StatusCode: shared.APP_STATUS_SUCCESS,
 		RecordIDs:  record_ids,
@@ -111,15 +135,13 @@ func (s *Server) handle_app_keykeeper_fetch(session_id [16]byte, session_state *
 		return nil, err
 	}
 
-	// Query all records for the destination username
 	query_prefix := build_keykeeper_query_prefix(req.Username)
 	results, err := s.storage.Query(shared.STORE_CTX_KEYKEEPER, query_prefix, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	// Filter non-permanent records
-	var records []protocol.KeyKeeperRecord
+	records := make([]protocol.KeyKeeperRecord, 0, len(results))
 	for i := 0; i < len(results); i++ {
 		storage_record := &KeyKeeperStorageRecord{}
 		if err := storage_record.UnmarshalBinary(results[i]); err != nil {
@@ -149,15 +171,12 @@ func (s *Server) handle_app_keykeeper_batch_fetch(session_id [16]byte, session_s
 		return nil, err
 	}
 
-	// 1. Verify signature against user's SigningPub
 	signing_pub, err := s.get_user_signing_pub(req.Username)
 	if err != nil {
 		return nil, err
 	}
 
-	// Build signature payload: username || record_ids
-	sig_payload_len := len(req.Username) + len(req.RecordIDs)*16
-	sig_payload := make([]byte, sig_payload_len)
+	sig_payload := make([]byte, len(req.Username)+len(req.RecordIDs)*16)
 	copy(sig_payload, req.Username)
 	sig_offset := len(req.Username)
 	for i := 0; i < len(req.RecordIDs); i++ {
@@ -170,14 +189,12 @@ func (s *Server) handle_app_keykeeper_batch_fetch(session_id [16]byte, session_s
 		return nil, errors.New("invalid batch fetch signature")
 	}
 
-	// 2. Fetch each record and verify ownership
-	var records []protocol.KeyKeeperRecord
+	records := make([]protocol.KeyKeeperRecord, 0, len(req.RecordIDs))
 	for i := 0; i < len(req.RecordIDs); i++ {
 		storage_key := build_keykeeper_storage_key(req.Username, req.RecordIDs[i])
 		record_bytes, err := s.storage.Retrieve(shared.STORE_CTX_KEYKEEPER, storage_key)
 		if err != nil {
-			// Record does not belong to this username — reject entire request
-			return nil, errors.New("record does not belong to username")
+			return nil, errors.New("record not found for username")
 		}
 
 		storage_record := &KeyKeeperStorageRecord{}
@@ -206,15 +223,12 @@ func (s *Server) handle_app_keykeeper_classify(session_id [16]byte, session_stat
 		return nil, err
 	}
 
-	// 1. Verify signature against user's SigningPub
 	signing_pub, err := s.get_user_signing_pub(req.DestinationUsername)
 	if err != nil {
 		return nil, err
 	}
 
-	// Build signature payload: destination_username || important_ids || garbage_ids
-	sig_payload_len := len(req.DestinationUsername) + len(req.ImportantIDs)*16 + len(req.GarbageIDs)*16
-	sig_payload := make([]byte, sig_payload_len)
+	sig_payload := make([]byte, len(req.DestinationUsername)+len(req.ImportantIDs)*16+len(req.GarbageIDs)*16)
 	copy(sig_payload, req.DestinationUsername)
 	sig_offset := len(req.DestinationUsername)
 	for i := 0; i < len(req.ImportantIDs); i++ {
@@ -231,33 +245,43 @@ func (s *Server) handle_app_keykeeper_classify(session_id [16]byte, session_stat
 		return nil, errors.New("invalid classify signature")
 	}
 
-	// 2. Verify ownership and delete garbage records
-	for i := 0; i < len(req.GarbageIDs); i++ {
-		storage_key := build_keykeeper_storage_key(req.DestinationUsername, req.GarbageIDs[i])
-		if err := s.storage.Delete(shared.STORE_CTX_KEYKEEPER, storage_key); err != nil {
-			return nil, errors.New("garbage record does not belong to username")
-		}
-	}
-
-	// 3. Verify ownership and mark important records as permanent
+	// Validate ownership of ALL records in BOTH lists BEFORE any mutation.
+	important_records := make([]*KeyKeeperStorageRecord, len(req.ImportantIDs))
 	for i := 0; i < len(req.ImportantIDs); i++ {
 		storage_key := build_keykeeper_storage_key(req.DestinationUsername, req.ImportantIDs[i])
 		record_bytes, err := s.storage.Retrieve(shared.STORE_CTX_KEYKEEPER, storage_key)
 		if err != nil {
-			return nil, errors.New("important record does not belong to username")
+			return nil, errors.New("important record not found for username")
 		}
-
 		storage_record := &KeyKeeperStorageRecord{}
 		if err := storage_record.UnmarshalBinary(record_bytes); err != nil {
 			return nil, err
 		}
+		important_records[i] = storage_record
+	}
 
-		storage_record.IsPermanent = true
-		updated_bytes, err := storage_record.MarshalBinary()
+	for i := 0; i < len(req.GarbageIDs); i++ {
+		storage_key := build_keykeeper_storage_key(req.DestinationUsername, req.GarbageIDs[i])
+		if _, err := s.storage.Retrieve(shared.STORE_CTX_KEYKEEPER, storage_key); err != nil {
+			return nil, errors.New("garbage record not found for username")
+		}
+	}
+
+	// All validations passed; mutate.
+	for i := 0; i < len(req.GarbageIDs); i++ {
+		storage_key := build_keykeeper_storage_key(req.DestinationUsername, req.GarbageIDs[i])
+		if err := s.storage.Delete(shared.STORE_CTX_KEYKEEPER, storage_key); err != nil {
+			return nil, err
+		}
+	}
+
+	for i := 0; i < len(req.ImportantIDs); i++ {
+		important_records[i].IsPermanent = true
+		updated_bytes, err := important_records[i].MarshalBinary()
 		if err != nil {
 			return nil, err
 		}
-
+		storage_key := build_keykeeper_storage_key(req.DestinationUsername, req.ImportantIDs[i])
 		if err := s.storage.Store(shared.STORE_CTX_KEYKEEPER, storage_key, updated_bytes); err != nil {
 			return nil, err
 		}

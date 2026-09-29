@@ -23,32 +23,26 @@ func (g *GroupPostMessageRequest) MarshalBinary() ([]byte, error) {
 	enc_msg_len := uint64(len(g.EncryptedMessage))
 	group_sig_len := uint64(len(g.GroupSignature))
 
-	// 1 (op) + 16 (group_id) + 8 (len1) + data1 + 8 (len2) + data2 + 16 (checksum)
 	total_size := 1 + 16 + 8 + int(enc_msg_len) + 8 + int(group_sig_len) + 16
 	buf := make([]byte, total_size)
 	offset := 0
 
-	// 1. App OpCode
 	buf[offset] = shared.APP_OP_GROUP_POST_MESSAGE
 	offset += 1
 
-	// 2. GroupID
 	copy(buf[offset:offset+16], g.GroupID[:])
 	offset += 16
 
-	// 3. EncryptedMessage
 	binary.BigEndian.PutUint64(buf[offset:offset+8], enc_msg_len)
 	offset += 8
 	copy(buf[offset:offset+int(enc_msg_len)], g.EncryptedMessage)
 	offset += int(enc_msg_len)
 
-	// 4. GroupSignature
 	binary.BigEndian.PutUint64(buf[offset:offset+8], group_sig_len)
 	offset += 8
 	copy(buf[offset:offset+int(group_sig_len)], g.GroupSignature)
 	offset += int(group_sig_len)
 
-	// 5. Checksum
 	checksum := crypt.Checksum(buf[:offset])
 	copy(buf[offset:offset+16], checksum[:])
 
@@ -73,43 +67,39 @@ func (g *GroupPostMessageRequest) UnmarshalBinary(data []byte) error {
 
 	offset := 0
 
-	// 1. App OpCode
 	app_op := data[offset]
 	offset += 1
 	if app_op != shared.APP_OP_GROUP_POST_MESSAGE {
 		return errors.New("protocol: invalid App OpCode for GroupPostMessageRequest")
 	}
 
-	// 2. GroupID
 	if offset+16 > payload_length {
 		return errors.New("protocol: underflow reading GroupID")
 	}
 	copy(g.GroupID[:], data[offset:offset+16])
 	offset += 16
 
-	// 3. EncryptedMessage
 	if offset+8 > payload_length {
 		return errors.New("protocol: underflow reading EncryptedMessage length")
 	}
 	enc_msg_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(enc_msg_len) > payload_length {
+	if enc_msg_len > uint64(payload_length-offset) {
 		return errors.New("protocol: underflow reading EncryptedMessage data")
 	}
-	g.EncryptedMessage = make([]byte, enc_msg_len)
+	g.EncryptedMessage = make([]byte, int(enc_msg_len))
 	copy(g.EncryptedMessage, data[offset:offset+int(enc_msg_len)])
 	offset += int(enc_msg_len)
 
-	// 4. GroupSignature
 	if offset+8 > payload_length {
 		return errors.New("protocol: underflow reading GroupSignature length")
 	}
 	group_sig_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(group_sig_len) > payload_length {
+	if group_sig_len > uint64(payload_length-offset) {
 		return errors.New("protocol: underflow reading GroupSignature data")
 	}
-	g.GroupSignature = make([]byte, group_sig_len)
+	g.GroupSignature = make([]byte, int(group_sig_len))
 	copy(g.GroupSignature, data[offset:offset+int(group_sig_len)])
 	offset += int(group_sig_len)
 
@@ -126,20 +116,16 @@ type GroupPostMessageResponse struct {
 }
 
 func (g *GroupPostMessageResponse) MarshalBinary() ([]byte, error) {
-	// 1 (op) + 1 (status) + 16 (checksum) = 18 bytes
 	total_size := 18
 	buf := make([]byte, total_size)
 	offset := 0
 
-	// 1. App OpCode
 	buf[offset] = shared.APP_OP_GROUP_POST_MESSAGE
 	offset += 1
 
-	// 2. StatusCode
 	buf[offset] = g.StatusCode
 	offset += 1
 
-	// 3. Checksum
 	checksum := crypt.Checksum(buf[:offset])
 	copy(buf[offset:offset+16], checksum[:])
 
@@ -163,17 +149,12 @@ func (g *GroupPostMessageResponse) UnmarshalBinary(data []byte) error {
 
 	offset := 0
 
-	// 1. App OpCode
 	app_op := data[offset]
 	offset += 1
 	if app_op != shared.APP_OP_GROUP_POST_MESSAGE {
 		return errors.New("protocol: invalid App OpCode for GroupPostMessageResponse")
 	}
 
-	// 2. StatusCode
-	if offset+1 > payload_length {
-		return errors.New("protocol: underflow reading StatusCode")
-	}
 	g.StatusCode = data[offset]
 	offset += 1
 

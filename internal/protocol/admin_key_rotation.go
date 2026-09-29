@@ -24,36 +24,29 @@ func (a *AdminKeyRotationRequest) MarshalBinary() ([]byte, error) {
 	new_admin_pub_len := uint64(len(a.NewAdminPublicKey))
 	owner_sig_len := uint64(len(a.OwnerSignature))
 
-	// 1 (op) + 16 (group_id) + 8 (version) + 8 (len1) + data1 + 8 (len2) + data2 + 16 (checksum)
 	total_size := 1 + 16 + 8 + 8 + int(new_admin_pub_len) + 8 + int(owner_sig_len) + 16
 	buf := make([]byte, total_size)
 	offset := 0
 
-	// 1. App OpCode
 	buf[offset] = shared.APP_OP_ADMIN_KEY_ROTATION
 	offset += 1
 
-	// 2. GroupID
 	copy(buf[offset:offset+16], a.GroupID[:])
 	offset += 16
 
-	// 3. GroupVersion
 	binary.BigEndian.PutUint64(buf[offset:offset+8], a.GroupVersion)
 	offset += 8
 
-	// 4. NewAdminPublicKey
 	binary.BigEndian.PutUint64(buf[offset:offset+8], new_admin_pub_len)
 	offset += 8
 	copy(buf[offset:offset+int(new_admin_pub_len)], a.NewAdminPublicKey)
 	offset += int(new_admin_pub_len)
 
-	// 5. OwnerSignature
 	binary.BigEndian.PutUint64(buf[offset:offset+8], owner_sig_len)
 	offset += 8
 	copy(buf[offset:offset+int(owner_sig_len)], a.OwnerSignature)
 	offset += int(owner_sig_len)
 
-	// 6. Checksum
 	checksum := crypt.Checksum(buf[:offset])
 	copy(buf[offset:offset+16], checksum[:])
 
@@ -100,10 +93,10 @@ func (a *AdminKeyRotationRequest) UnmarshalBinary(data []byte) error {
 	}
 	new_admin_pub_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(new_admin_pub_len) > payload_length {
+	if new_admin_pub_len > uint64(payload_length-offset) {
 		return errors.New("protocol: underflow reading NewAdminPublicKey data")
 	}
-	a.NewAdminPublicKey = make([]byte, new_admin_pub_len)
+	a.NewAdminPublicKey = make([]byte, int(new_admin_pub_len))
 	copy(a.NewAdminPublicKey, data[offset:offset+int(new_admin_pub_len)])
 	offset += int(new_admin_pub_len)
 
@@ -112,10 +105,10 @@ func (a *AdminKeyRotationRequest) UnmarshalBinary(data []byte) error {
 	}
 	owner_sig_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(owner_sig_len) > payload_length {
+	if owner_sig_len > uint64(payload_length-offset) {
 		return errors.New("protocol: underflow reading OwnerSignature data")
 	}
-	a.OwnerSignature = make([]byte, owner_sig_len)
+	a.OwnerSignature = make([]byte, int(owner_sig_len))
 	copy(a.OwnerSignature, data[offset:offset+int(owner_sig_len)])
 	offset += int(owner_sig_len)
 
@@ -171,9 +164,6 @@ func (a *AdminKeyRotationResponse) UnmarshalBinary(data []byte) error {
 		return errors.New("protocol: invalid App OpCode for AdminKeyRotationResponse")
 	}
 
-	if offset+1 > payload_length {
-		return errors.New("protocol: underflow reading StatusCode")
-	}
 	a.StatusCode = data[offset]
 	offset += 1
 

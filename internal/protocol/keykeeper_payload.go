@@ -75,8 +75,8 @@ func (k *KeyKeeperPayload) MarshalBinary() ([]byte, error) {
 }
 
 func (k *KeyKeeperPayload) UnmarshalBinary(data []byte) error {
-	// Min size: 1 + 16 + 8 + 8*4 + 8 + 16 = 85 bytes
-	const min_size = 85
+	// Min size: 1 (type) + 16 (group_id) + 8 (version) + 8*4 (four length prefixes) + 8 (created_at) + 16 (checksum) = 81 bytes
+	const min_size = 81
 	if len(data) < min_size {
 		return errors.New("protocol: data too short for KeyKeeperPayload")
 	}
@@ -101,42 +101,57 @@ func (k *KeyKeeperPayload) UnmarshalBinary(data []byte) error {
 	k.GroupVersion = binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
 
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading Payload length")
+	}
 	payload_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(payload_len) > payload_length {
+	if payload_len > uint64(payload_length-offset) {
 		return errors.New("protocol: underflow reading Payload data")
 	}
-	k.Payload = make([]byte, payload_len)
+	k.Payload = make([]byte, int(payload_len))
 	copy(k.Payload, data[offset:offset+int(payload_len)])
 	offset += int(payload_len)
 
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading SenderHint length")
+	}
 	hint_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(hint_len) > payload_length {
+	if hint_len > uint64(payload_length-offset) {
 		return errors.New("protocol: underflow reading SenderHint data")
 	}
-	k.SenderHint = make([]byte, hint_len)
+	k.SenderHint = make([]byte, int(hint_len))
 	copy(k.SenderHint, data[offset:offset+int(hint_len)])
 	offset += int(hint_len)
 
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading CreatedAt")
+	}
 	k.CreatedAt = binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
 
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading SignerPubKey length")
+	}
 	pubkey_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(pubkey_len) > payload_length {
+	if pubkey_len > uint64(payload_length-offset) {
 		return errors.New("protocol: underflow reading SignerPubKey data")
 	}
-	k.SignerPubKey = make([]byte, pubkey_len)
+	k.SignerPubKey = make([]byte, int(pubkey_len))
 	copy(k.SignerPubKey, data[offset:offset+int(pubkey_len)])
 	offset += int(pubkey_len)
 
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading Signature length")
+	}
 	sig_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(sig_len) > payload_length {
+	if sig_len > uint64(payload_length-offset) {
 		return errors.New("protocol: underflow reading Signature data")
 	}
-	k.Signature = make([]byte, sig_len)
+	k.Signature = make([]byte, int(sig_len))
 	copy(k.Signature, data[offset:offset+int(sig_len)])
 	offset += int(sig_len)
 

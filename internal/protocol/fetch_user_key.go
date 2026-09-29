@@ -74,12 +74,15 @@ func (f *FetchUserKeyRequest) UnmarshalBinary(data []byte) error {
 		return errors.New("protocol: invalid App OpCode for FetchUserKeyRequest")
 	}
 
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading Username length")
+	}
 	username_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(username_len) > payload_length {
+	if username_len > uint64(payload_length-offset) {
 		return errors.New("protocol: underflow reading Username data")
 	}
-	f.Username = make([]byte, username_len)
+	f.Username = make([]byte, int(username_len))
 	copy(f.Username, data[offset:offset+int(username_len)])
 	offset += int(username_len)
 
@@ -89,12 +92,15 @@ func (f *FetchUserKeyRequest) UnmarshalBinary(data []byte) error {
 	f.Nonce = binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
 
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading LoginBrakeCookie length")
+	}
 	cookie_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(cookie_len) > payload_length {
+	if cookie_len > uint64(payload_length-offset) {
 		return errors.New("protocol: underflow reading LoginBrakeCookie data")
 	}
-	f.LoginBrakeCookie = make([]byte, cookie_len)
+	f.LoginBrakeCookie = make([]byte, int(cookie_len))
 	copy(f.LoginBrakeCookie, data[offset:offset+int(cookie_len)])
 	offset += int(cookie_len)
 
@@ -184,30 +190,39 @@ func (f *FetchUserKeyResponse) UnmarshalBinary(data []byte) error {
 	f.StatusCode = data[offset]
 	offset += 1
 
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading EncryptedMasterKey length")
+	}
 	key_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(key_len) > payload_length {
+	if key_len > uint64(payload_length-offset) {
 		return errors.New("protocol: underflow reading EncryptedMasterKey data")
 	}
-	f.EncryptedMasterKey = make([]byte, key_len)
+	f.EncryptedMasterKey = make([]byte, int(key_len))
 	copy(f.EncryptedMasterKey, data[offset:offset+int(key_len)])
 	offset += int(key_len)
 
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading LoginBrake length")
+	}
 	brake_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(brake_len) > payload_length {
+	if brake_len > uint64(payload_length-offset) {
 		return errors.New("protocol: underflow reading LoginBrake data")
 	}
-	f.LoginBrake = make([]byte, brake_len)
+	f.LoginBrake = make([]byte, int(brake_len))
 	copy(f.LoginBrake, data[offset:offset+int(brake_len)])
 	offset += int(brake_len)
 
+	if offset+8 > payload_length {
+		return errors.New("protocol: underflow reading LoginBrakeCookie length")
+	}
 	cookie_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(cookie_len) > payload_length {
+	if cookie_len > uint64(payload_length-offset) {
 		return errors.New("protocol: underflow reading LoginBrakeCookie data")
 	}
-	f.LoginBrakeCookie = make([]byte, cookie_len)
+	f.LoginBrakeCookie = make([]byte, int(cookie_len))
 	copy(f.LoginBrakeCookie, data[offset:offset+int(cookie_len)])
 	offset += int(cookie_len)
 

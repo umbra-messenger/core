@@ -40,7 +40,7 @@ func (s *Server) handle_general_req(data []byte) []byte {
 	binary.BigEndian.PutUint64(sig_payload[16:24], req.Nonce)
 	copy(sig_payload[24:], req.EncryptedPayload)
 
-	is_valid, err := s.crypt.Verify(shared.CTX_CLIENT_SESSION_SIGNING, sig_payload, req.Signature, session_state.ClientSigningPubKey)
+	is_valid, err := s.crypt.Verify(shared.CTX_CLIENT_SESSION_SIGNING_SIG, sig_payload, req.Signature, session_state.ClientSigningPubKey)
 	if err != nil || !is_valid {
 		return s.build_error_response(shared.ERR_CODE_INVALID_SIGNATURE)
 	}
@@ -94,7 +94,7 @@ func (s *Server) handle_general_req(data []byte) []byte {
 	}
 
 	// Sign response payload with Server's Private Key
-	sig, err := s.crypt.Sign(shared.CTX_SERVER_SESSION_SIGNING, res_enc_bytes, session_state.ServerSigningPrivKey)
+	sig, err := s.crypt.Sign(shared.CTX_SERVER_SESSION_SIGNING_SIG, res_enc_bytes, session_state.ServerSigningPrivKey)
 	if err != nil {
 		return s.build_error_response(shared.ERR_CODE_INTERNAL_SERVER)
 	}

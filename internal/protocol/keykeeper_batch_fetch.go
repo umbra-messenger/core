@@ -32,33 +32,27 @@ func (k *KeyKeeperBatchFetchRequest) MarshalBinary() ([]byte, error) {
 	buf := make([]byte, total_size)
 	offset := 0
 
-	// 1. App OpCode
 	buf[offset] = shared.APP_OP_KEYKEEPER_BATCH_FETCH
 	offset += 1
 
-	// 2. Username
 	binary.BigEndian.PutUint64(buf[offset:offset+8], username_len)
 	offset += 8
 	copy(buf[offset:offset+int(username_len)], k.Username)
 	offset += int(username_len)
 
-	// 3. RecordIDs Count
 	binary.BigEndian.PutUint64(buf[offset:offset+8], ids_count)
 	offset += 8
 
-	// 4. RecordIDs Data
 	for i := 0; i < len(k.RecordIDs); i++ {
 		copy(buf[offset:offset+16], k.RecordIDs[i][:])
 		offset += 16
 	}
 
-	// 5. Signature
 	binary.BigEndian.PutUint64(buf[offset:offset+8], sig_len)
 	offset += 8
 	copy(buf[offset:offset+int(sig_len)], k.Signature)
 	offset += int(sig_len)
 
-	// 6. Checksum
 	checksum := crypt.Checksum(buf[:offset])
 	copy(buf[offset:offset+16], checksum[:])
 
@@ -83,34 +77,34 @@ func (k *KeyKeeperBatchFetchRequest) UnmarshalBinary(data []byte) error {
 
 	offset := 0
 
-	// 1. App OpCode
 	app_op := data[offset]
 	offset += 1
 	if app_op != shared.APP_OP_KEYKEEPER_BATCH_FETCH {
 		return errors.New("protocol: invalid App OpCode for KeyKeeperBatchFetchRequest")
 	}
 
-	// 2. Username
 	if offset+8 > payload_length {
 		return errors.New("protocol: underflow reading Username length")
 	}
 	username_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(username_len) > payload_length {
+	if username_len > uint64(payload_length-offset) {
 		return errors.New("protocol: underflow reading Username data")
 	}
-	k.Username = make([]byte, username_len)
+	k.Username = make([]byte, int(username_len))
 	copy(k.Username, data[offset:offset+int(username_len)])
 	offset += int(username_len)
 
-	// 3. RecordIDs Count
 	if offset+8 > payload_length {
 		return errors.New("protocol: underflow reading RecordIDs count")
 	}
 	ids_count := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
+	if ids_count > uint64(payload_length-offset)/16 {
+		return errors.New("protocol: KeyKeeperBatchFetchRequest record ID count exceeds payload size")
+	}
 
-	k.RecordIDs = make([][16]byte, ids_count)
+	k.RecordIDs = make([][16]byte, int(ids_count))
 	for i := uint64(0); i < ids_count; i++ {
 		if offset+16 > payload_length {
 			return errors.New("protocol: underflow reading RecordID data")
@@ -119,16 +113,15 @@ func (k *KeyKeeperBatchFetchRequest) UnmarshalBinary(data []byte) error {
 		offset += 16
 	}
 
-	// 4. Signature
 	if offset+8 > payload_length {
 		return errors.New("protocol: underflow reading Signature length")
 	}
 	sig_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(sig_len) > payload_length {
+	if sig_len > uint64(payload_length-offset) {
 		return errors.New("protocol: underflow reading Signature data")
 	}
-	k.Signature = make([]byte, sig_len)
+	k.Signature = make([]byte, int(sig_len))
 	copy(k.Signature, data[offset:offset+int(sig_len)])
 	offset += int(sig_len)
 
@@ -179,17 +172,17 @@ func (k *KeyKeeperBatchFetchResponse) MarshalBinary() ([]byte, error) {
 		copy(buf[offset:offset+16], rec.RecordID[:])
 		offset += 16
 
-		sender_pub_len := uint64(len(rec.KemCiphertext))
-		binary.BigEndian.PutUint64(buf[offset:offset+8], sender_pub_len)
+		kem_len := uint64(len(rec.KemCiphertext))
+		binary.BigEndian.PutUint64(buf[offset:offset+8], kem_len)
 		offset += 8
-		copy(buf[offset:offset+int(sender_pub_len)], rec.KemCiphertext)
-		offset += int(sender_pub_len)
+		copy(buf[offset:offset+int(kem_len)], rec.KemCiphertext)
+		offset += int(kem_len)
 
-		enc_payload_len := uint64(len(rec.EncryptedPayload))
-		binary.BigEndian.PutUint64(buf[offset:offset+8], enc_payload_len)
+		enc_len := uint64(len(rec.EncryptedPayload))
+		binary.BigEndian.PutUint64(buf[offset:offset+8], enc_len)
 		offset += 8
-		copy(buf[offset:offset+int(enc_payload_len)], rec.EncryptedPayload)
-		offset += int(enc_payload_len)
+		copy(buf[offset:offset+int(enc_len)], rec.EncryptedPayload)
+		offset += int(enc_len)
 
 		binary.BigEndian.PutUint64(buf[offset:offset+8], rec.Timestamp)
 		offset += 8
@@ -224,19 +217,16 @@ func (k *KeyKeeperBatchFetchResponse) UnmarshalBinary(data []byte) error {
 		return errors.New("protocol: invalid App OpCode for KeyKeeperBatchFetchResponse")
 	}
 
-	if offset+1 > payload_length {
-		return errors.New("protocol: underflow reading StatusCode")
-	}
 	k.StatusCode = data[offset]
 	offset += 1
 
-	if offset+8 > payload_length {
-		return errors.New("protocol: underflow reading Records count")
-	}
 	records_count := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
+	if records_count > uint64(payload_length-offset)/40 {
+		return errors.New("protocol: KeyKeeperBatchFetchResponse record count exceeds payload size")
+	}
 
-	k.Records = make([]KeyKeeperRecord, records_count)
+	k.Records = make([]KeyKeeperRecord, int(records_count))
 	for i := uint64(0); i < records_count; i++ {
 		rec := &k.Records[i]
 
@@ -249,26 +239,26 @@ func (k *KeyKeeperBatchFetchResponse) UnmarshalBinary(data []byte) error {
 		if offset+8 > payload_length {
 			return errors.New("protocol: underflow reading KemCiphertext length")
 		}
-		sender_pub_len := binary.BigEndian.Uint64(data[offset : offset+8])
+		kem_len := binary.BigEndian.Uint64(data[offset : offset+8])
 		offset += 8
-		if offset+int(sender_pub_len) > payload_length {
+		if kem_len > uint64(payload_length-offset) {
 			return errors.New("protocol: underflow reading KemCiphertext data")
 		}
-		rec.KemCiphertext = make([]byte, sender_pub_len)
-		copy(rec.KemCiphertext, data[offset:offset+int(sender_pub_len)])
-		offset += int(sender_pub_len)
+		rec.KemCiphertext = make([]byte, int(kem_len))
+		copy(rec.KemCiphertext, data[offset:offset+int(kem_len)])
+		offset += int(kem_len)
 
 		if offset+8 > payload_length {
 			return errors.New("protocol: underflow reading EncryptedPayload length")
 		}
-		enc_payload_len := binary.BigEndian.Uint64(data[offset : offset+8])
+		enc_len := binary.BigEndian.Uint64(data[offset : offset+8])
 		offset += 8
-		if offset+int(enc_payload_len) > payload_length {
+		if enc_len > uint64(payload_length-offset) {
 			return errors.New("protocol: underflow reading EncryptedPayload data")
 		}
-		rec.EncryptedPayload = make([]byte, enc_payload_len)
-		copy(rec.EncryptedPayload, data[offset:offset+int(enc_payload_len)])
-		offset += int(enc_payload_len)
+		rec.EncryptedPayload = make([]byte, int(enc_len))
+		copy(rec.EncryptedPayload, data[offset:offset+int(enc_len)])
+		offset += int(enc_len)
 
 		if offset+8 > payload_length {
 			return errors.New("protocol: underflow reading Timestamp")

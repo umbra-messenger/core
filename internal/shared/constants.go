@@ -2,39 +2,70 @@ package shared
 
 // Domain separation contexts (CTX_*) enforce strict cryptographic isolation.
 // They MUST be centralized here and matched exactly between client and server.
+//
+// RULE: A context MUST be used for exactly one operation. Key derivation and
+// message signing are distinct operations even when they use the same key pair.
+// AEAD encryption with two different keys is two distinct operations.
 const (
-	CTX_SESSION_KEY_DERIV      = "umbra.session.key_derivation"
-	CTX_CLIENT_SESSION_SIGNING = "umbra.session.signing_key.client"
-	CTX_SERVER_SESSION_SIGNING = "umbra.session.signing_key.server"
-	CTX_PUZZLE_HASH            = "umbra.puzzle.fast_hash"
-	CTX_PUZZLE_KEY_DERIV       = "umbra.puzzle.slow_key"
+	// Session key derivation
+	CTX_SESSION_KEY_DERIV = "umbra.session.key_derivation"
+
+	// Session signing keypair derivation (distinct from signing operation)
+	CTX_CLIENT_SESSION_SIGNING_KEY = "umbra.session.signing_key.client.derive"
+	CTX_SERVER_SESSION_SIGNING_KEY = "umbra.session.signing_key.server.derive"
+
+	// Session message signatures
+	CTX_CLIENT_SESSION_SIGNING_SIG = "umbra.session.signing.client.message"
+	CTX_SERVER_SESSION_SIGNING_SIG = "umbra.session.signing.server.message"
+
+	// Handshake
+	CTX_HANDSHAKE_INIT_SIG = "umbra.handshake.init_signature"
+	CTX_PUZZLE_HASH        = "umbra.puzzle.fast_hash"
+	CTX_PUZZLE_KEY_DERIV   = "umbra.puzzle.slow_key"
+
+	// AEAD contexts
 	CTX_SERVER_COOKIE          = "umbra.server.cookie_aead"
-	CTX_KEYKEEPER_KEY_DERIV    = "umbra.keykeeper.encryption_key"
-	CTX_PERSONAL_NOTE_DERIV    = "umbra.personal_note.encryption_key"
-	CTX_KEM_ENCAPSULATE        = "umbra.kem.encapsulate"
 	CTX_AEAD_PUZZLE_TOKEN      = "umbra.aead.puzzle_token"
+	CTX_AEAD_TOKEN_PROOF       = "umbra.aead.token_proof"
 	CTX_AEAD_SESSION_PUZZLE    = "umbra.aead.session_puzzle"
 	CTX_AEAD_VERIFICATION_RESP = "umbra.aead.verification_resp"
 	CTX_AEAD_GENERAL_PAYLOAD   = "umbra.aead.general_payload"
-	CTX_HANDSHAKE_INIT_SIG     = "umbra.handshake.init_signature"
-	CTX_DUMMY_USER_KEY         = "umbra.dummy.user_key"
-	CTX_DUMMY_PUB_KEY          = "umbra.dummy.pub_key"
-	CTX_USER_REGISTRATION_POW  = "umbra.user.registration_pow"
-	CTX_USER_REGISTRATION      = "umbra.user.registration_auth"
-	CTX_LOGIN_BRAKE_COOKIE     = "umbra.login_brake.cookie_aead"
-	CTX_LOGIN_BRAKE_POW        = "umbra.login_brake.pow_hash"
-	CTX_KEYKEEPER_KEM          = "umbra.keykeeper.kem"
-	CTX_KEYKEEPER_BATCH_FETCH  = "umbra.keykeeper.batch_fetch_auth"
-	CTX_KEYKEEPER_CLASSIFY     = "umbra.keykeeper.classify_auth"
-	CTX_PERSONAL_NOTE_FETCH    = "umbra.personal_note.fetch_auth"
-	CTX_PERSONAL_NOTE_UPDATE   = "umbra.personal_note.update_auth"
-	CTX_GROUP_WRITE            = "umbra.group.write_signature"
-	CTX_GROUP_REKEY            = "umbra.group.rekey_signature"
-	CTX_GROUP_ADMIN_ROTATION   = "umbra.group.admin_rotation_signature"
-	CTX_GROUP_WIPE             = "umbra.group.wipe_signature"
-	CTX_GROUP_KEY_DERIV        = "umbra.group.key_derivation"
-	CTX_ADMIN_KEY_DERIV        = "umbra.group.admin_key_derivation"
-	CTX_OWNER_KEY_DERIV        = "umbra.group.owner_key_derivation"
+
+	// Login Brake
+	CTX_LOGIN_BRAKE_COOKIE = "umbra.login_brake.cookie_aead"
+	CTX_LOGIN_BRAKE_POW    = "umbra.login_brake.pow_hash"
+
+	// KeyKeeper
+	CTX_KEYKEEPER_KEY_DERIV   = "umbra.keykeeper.encryption_key"
+	CTX_KEYKEEPER_KEM         = "umbra.keykeeper.kem"
+	CTX_KEYKEEPER_BATCH_FETCH = "umbra.keykeeper.batch_fetch_auth"
+	CTX_KEYKEEPER_CLASSIFY    = "umbra.keykeeper.classify_auth"
+
+	// Personal Note
+	CTX_PERSONAL_NOTE_DERIV  = "umbra.personal_note.encryption_key"
+	CTX_PERSONAL_NOTE_FETCH  = "umbra.personal_note.fetch_auth"
+	CTX_PERSONAL_NOTE_UPDATE = "umbra.personal_note.update_auth"
+
+	// KEM
+	CTX_KEM_ENCAPSULATE = "umbra.kem.encapsulate"
+
+	// Dummy key derivation
+	CTX_DUMMY_USER_KEY     = "umbra.dummy.user_key"
+	CTX_DUMMY_SIGNING_PUB  = "umbra.dummy.signing_pub"
+	CTX_DUMMY_EXCHANGE_PUB = "umbra.dummy.exchange_pub"
+
+	// User registration
+	CTX_USER_REGISTRATION_POW = "umbra.user.registration_pow"
+	CTX_USER_REGISTRATION     = "umbra.user.registration_auth"
+
+	// Group
+	CTX_GROUP_WRITE          = "umbra.group.write_signature"
+	CTX_GROUP_REKEY          = "umbra.group.rekey_signature"
+	CTX_GROUP_ADMIN_ROTATION = "umbra.group.admin_rotation_signature"
+	CTX_GROUP_WIPE           = "umbra.group.wipe_signature"
+	CTX_GROUP_KEY_DERIV      = "umbra.group.key_derivation"
+	CTX_ADMIN_KEY_DERIV      = "umbra.group.admin_key_derivation"
+	CTX_OWNER_KEY_DERIV      = "umbra.group.owner_key_derivation"
 )
 
 // Storage contexts (STORE_CTX_*) tell the Host the logical category of stored data.
@@ -48,23 +79,28 @@ const (
 	STORE_CTX_KEYKEEPER       = "keykeeper"
 	STORE_CTX_PERSONAL_NOTE   = "personal_note"
 	STORE_CTX_GROUP_MESSAGE   = "group_message"
+	STORE_CTX_RATE_LIMIT      = "rate_limit"
 )
 
 // Protocol sizes, limits, and magic bytes.
 const (
-	SESSION_ID_LEN                        = 16
-	SESSION_TOKEN_LEN                     = 32
-	MASTER_KEY_LEN                        = 32
-	CHECKSUM_LEN                          = 16
-	PUZZLE_KEYSPACE_BITS                  = 20
-	KEYKEEPER_MAX_RECORD_SIZE             = 4096
-	PERSONAL_NOTE_MAX_SIZE                = 65536
-	USERNAME_DISCRIMINATOR_MAX_TRIES      = 7
-	USER_REGISTRATION_POW_DIFFICULTY_BITS = 6
-	LOGIN_BRAKE_LEN                       = 32
-	LOGIN_BRAKE_POW_DIFFICULTY_BITS       = 8
-	LOGIN_BRAKE_SKIP_THRESHOLD_SECONDS    = 3600
-	KEYKEEPER_MAX_BATCH_SIZE              = 50
+	SESSION_ID_LEN                         = 16
+	SESSION_TOKEN_LEN                      = 32
+	MASTER_KEY_LEN                         = 32
+	CHECKSUM_LEN                           = 16
+	PUZZLE_KEYSPACE_BITS                   = 20
+	KEYKEEPER_MAX_RECORD_SIZE              = 4096
+	KEYKEEPER_MAX_BATCH_SIZE               = 50
+	KEYKEEPER_DST_RATE_LIMIT_MAX           = 50
+	KEYKEEPER_DST_RATE_LIMIT_WINDOW_SECS   = 3600
+	PERSONAL_NOTE_MAX_SIZE                 = 65536
+	USERNAME_DISCRIMINATOR_MAX_TRIES       = 7
+	USER_REGISTRATION_POW_DIFFICULTY_BITS  = 6
+	USER_REGISTRATION_MIN_INTERVAL_SECONDS = 10
+	LOGIN_BRAKE_LEN                        = 32
+	LOGIN_BRAKE_POW_DIFFICULTY_BITS        = 8
+	LOGIN_BRAKE_SKIP_THRESHOLD_SECONDS     = 3600
+	GROUP_CREATE_MIN_INTERVAL_SECONDS      = 1
 )
 
 // Message Types (uint8) for Server routing.
@@ -109,13 +145,14 @@ const (
 	ERR_CODE_REPLAY_ATTACK     uint16 = 02003
 	ERR_CODE_PUZZLE_UNSOLVED   uint16 = 02004
 	ERR_CODE_INVALID_KEY       uint16 = 02005
+	ERR_CODE_RATE_LIMITED      uint16 = 04001
 	ERR_CODE_INTERNAL_SERVER   uint16 = 05000
 )
 
 const (
-	// Application response status codes
 	APP_STATUS_SUCCESS      uint8 = 0
 	APP_STATUS_BRAKE_ROTATE uint8 = 1
+	APP_STATUS_REJECTED     uint8 = 2
 )
 
 const (

@@ -55,8 +55,8 @@ func (g *GroupMetadata) MarshalBinary() ([]byte, error) {
 }
 
 func (g *GroupMetadata) UnmarshalBinary(data []byte) error {
-	// Min size: 8*3 + 8 + 16 = 56 bytes
-	const min_size = 56
+	// Min size: 8*3 (three length prefixes) + 8 (version) + 16 (checksum) = 48 bytes
+	const min_size = 48
 	if len(data) < min_size {
 		return errors.New("server: data too short for GroupMetadata")
 	}
@@ -72,30 +72,39 @@ func (g *GroupMetadata) UnmarshalBinary(data []byte) error {
 
 	offset := 0
 
+	if offset+8 > payload_length {
+		return errors.New("server: underflow reading GroupPublicKey length")
+	}
 	group_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(group_len) > payload_length {
-		return errors.New("server: underflow reading GroupPublicKey")
+	if group_len > uint64(payload_length-offset) {
+		return errors.New("server: underflow reading GroupPublicKey data")
 	}
-	g.GroupPublicKey = make([]byte, group_len)
+	g.GroupPublicKey = make([]byte, int(group_len))
 	copy(g.GroupPublicKey, data[offset:offset+int(group_len)])
 	offset += int(group_len)
 
+	if offset+8 > payload_length {
+		return errors.New("server: underflow reading AdminPublicKey length")
+	}
 	admin_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(admin_len) > payload_length {
-		return errors.New("server: underflow reading AdminPublicKey")
+	if admin_len > uint64(payload_length-offset) {
+		return errors.New("server: underflow reading AdminPublicKey data")
 	}
-	g.AdminPublicKey = make([]byte, admin_len)
+	g.AdminPublicKey = make([]byte, int(admin_len))
 	copy(g.AdminPublicKey, data[offset:offset+int(admin_len)])
 	offset += int(admin_len)
 
+	if offset+8 > payload_length {
+		return errors.New("server: underflow reading OwnerPublicKey length")
+	}
 	owner_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(owner_len) > payload_length {
-		return errors.New("server: underflow reading OwnerPublicKey")
+	if owner_len > uint64(payload_length-offset) {
+		return errors.New("server: underflow reading OwnerPublicKey data")
 	}
-	g.OwnerPublicKey = make([]byte, owner_len)
+	g.OwnerPublicKey = make([]byte, int(owner_len))
 	copy(g.OwnerPublicKey, data[offset:offset+int(owner_len)])
 	offset += int(owner_len)
 

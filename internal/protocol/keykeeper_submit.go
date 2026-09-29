@@ -24,6 +24,9 @@ func (k *KeyKeeperSubmitRequest) MarshalBinary() ([]byte, error) {
 	if k.Records == nil {
 		k.Records = []KeyKeeperSubmitRecord{}
 	}
+	if len(k.Records) > shared.KEYKEEPER_MAX_BATCH_SIZE {
+		return nil, errors.New("protocol: KeyKeeperSubmitRequest exceeds maximum batch size")
+	}
 
 	records_count := uint64(len(k.Records))
 	records_data_size := 0
@@ -32,7 +35,6 @@ func (k *KeyKeeperSubmitRequest) MarshalBinary() ([]byte, error) {
 		if rec.DestinationUsername == nil || rec.KemCiphertext == nil || rec.EncryptedPayload == nil {
 			return nil, errors.New("protocol: KeyKeeperSubmitRecord contains nil slices")
 		}
-		// 8 (len1) + d1 + 8 (len2) + d2 + 8 (len3) + d3
 		records_data_size += 8 + len(rec.DestinationUsername) + 8 + len(rec.KemCiphertext) + 8 + len(rec.EncryptedPayload)
 	}
 
@@ -101,8 +103,12 @@ func (k *KeyKeeperSubmitRequest) UnmarshalBinary(data []byte) error {
 
 	records_count := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
+	// Pre-allocation bound: spec-derived cap, enforced before any make().
+	if records_count > uint64(shared.KEYKEEPER_MAX_BATCH_SIZE) {
+		return errors.New("protocol: KeyKeeperSubmitRequest exceeds maximum batch size")
+	}
 
-	k.Records = make([]KeyKeeperSubmitRecord, records_count)
+	k.Records = make([]KeyKeeperSubmitRecord, int(records_count))
 	for i := uint64(0); i < records_count; i++ {
 		rec := &k.Records[i]
 
@@ -111,10 +117,10 @@ func (k *KeyKeeperSubmitRequest) UnmarshalBinary(data []byte) error {
 		}
 		dest_len := binary.BigEndian.Uint64(data[offset : offset+8])
 		offset += 8
-		if offset+int(dest_len) > payload_length {
+		if dest_len > uint64(payload_length-offset) {
 			return errors.New("protocol: underflow reading DestinationUsername data")
 		}
-		rec.DestinationUsername = make([]byte, dest_len)
+		rec.DestinationUsername = make([]byte, int(dest_len))
 		copy(rec.DestinationUsername, data[offset:offset+int(dest_len)])
 		offset += int(dest_len)
 
@@ -123,10 +129,10 @@ func (k *KeyKeeperSubmitRequest) UnmarshalBinary(data []byte) error {
 		}
 		kem_len := binary.BigEndian.Uint64(data[offset : offset+8])
 		offset += 8
-		if offset+int(kem_len) > payload_length {
+		if kem_len > uint64(payload_length-offset) {
 			return errors.New("protocol: underflow reading KemCiphertext data")
 		}
-		rec.KemCiphertext = make([]byte, kem_len)
+		rec.KemCiphertext = make([]byte, int(kem_len))
 		copy(rec.KemCiphertext, data[offset:offset+int(kem_len)])
 		offset += int(kem_len)
 
@@ -135,10 +141,10 @@ func (k *KeyKeeperSubmitRequest) UnmarshalBinary(data []byte) error {
 		}
 		enc_len := binary.BigEndian.Uint64(data[offset : offset+8])
 		offset += 8
-		if offset+int(enc_len) > payload_length {
+		if enc_len > uint64(payload_length-offset) {
 			return errors.New("protocol: underflow reading EncryptedPayload data")
 		}
-		rec.EncryptedPayload = make([]byte, enc_len)
+		rec.EncryptedPayload = make([]byte, int(enc_len))
 		copy(rec.EncryptedPayload, data[offset:offset+int(enc_len)])
 		offset += int(enc_len)
 	}
@@ -217,8 +223,12 @@ func (k *KeyKeeperSubmitResponse) UnmarshalBinary(data []byte) error {
 
 	ids_count := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
+	// Pre-allocation bound: each ID is 16 bytes, so count cannot exceed remaining/16.
+	if ids_count > uint64(payload_length-offset)/16 {
+		return errors.New("protocol: KeyKeeperSubmitResponse record count exceeds payload size")
+	}
 
-	k.RecordIDs = make([][16]byte, ids_count)
+	k.RecordIDs = make([][16]byte, int(ids_count))
 	for i := uint64(0); i < ids_count; i++ {
 		if offset+16 > payload_length {
 			return errors.New("protocol: underflow reading RecordID data")

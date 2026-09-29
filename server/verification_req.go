@@ -13,7 +13,7 @@ func (s *Server) handle_verification_req(data []byte) []byte {
 		return s.build_error_response(shared.ERR_CODE_INVALID_PROTOCOL)
 	}
 
-	// 1. Decrypt SessionCookie
+	// 1. Decrypt SessionCookie.
 	cookie_pkg := &protocol.EncryptedPackage{}
 	if err := cookie_pkg.UnmarshalBinary(req.SessionCookie); err != nil {
 		return s.build_error_response(shared.ERR_CODE_INVALID_PROTOCOL)
@@ -29,13 +29,15 @@ func (s *Server) handle_verification_req(data []byte) []byte {
 		return s.build_error_response(shared.ERR_CODE_INTERNAL_SERVER)
 	}
 
-	// 2. Verify Session Token (PoW)
+	// 2. Verify Session Token Proof.
+	// The client encrypted the token with session_sym_key, so the server
+	// decrypts with session_sym_key under a distinct AEAD context.
 	token_pkg := &protocol.EncryptedPackage{}
 	if err := token_pkg.UnmarshalBinary(req.SessionTokenFound); err != nil {
 		return s.build_error_response(shared.ERR_CODE_PUZZLE_UNSOLVED)
 	}
 
-	decrypted_token, err := s.crypt.DecryptFull(shared.CTX_AEAD_PUZZLE_TOKEN, token_pkg.Ciphertext, cookie.SessionSymKey[:], nil, token_pkg.Tag, token_pkg.Nonce, true)
+	decrypted_token, err := s.crypt.DecryptFull(shared.CTX_AEAD_TOKEN_PROOF, token_pkg.Ciphertext, cookie.SessionSymKey[:], nil, token_pkg.Tag, token_pkg.Nonce, true)
 	if err != nil {
 		return s.build_error_response(shared.ERR_CODE_PUZZLE_UNSOLVED)
 	}
@@ -44,53 +46,42 @@ func (s *Server) handle_verification_req(data []byte) []byte {
 		return s.build_error_response(shared.ERR_CODE_PUZZLE_UNSOLVED)
 	}
 
-	// 3. Accept Client's Session Signing PubKey
+	// 3. Accept Client's Session Signing PubKey.
 	client_signing_pub := req.SessionSigningPubKey
 
-	// 4. Generate Session ID and Establish Session in Storage
+	// 4. Generate Session ID and derive server signing key.
 	var session_id [shared.SESSION_ID_LEN]byte
 	if err := s.crypt.Rand(session_id[:]); err != nil {
 		return s.build_error_response(shared.ERR_CODE_INTERNAL_SERVER)
 	}
 
-	_, server_signing_priv, err := s.crypt.DeriveSigningKeyPair(shared.CTX_SERVER_SESSION_SIGNING, cookie.SessionMasterKey)
+	_, server_signing_priv, err := s.crypt.DeriveSigningKeyPair(shared.CTX_SERVER_SESSION_SIGNING_KEY, cookie.SessionMasterKey)
 	if err != nil {
 		return s.build_error_response(shared.ERR_CODE_INTERNAL_SERVER)
 	}
 
+	// 5. Generate initial Login Brake.
+	initial_brake, initial_cookie, initial_timestamp, err := s.generate_login_brake(1)
+	if err != nil {
+		return s.build_error_response(shared.ERR_CODE_INTERNAL_SERVER)
+	}
+
+	// 6. Build complete SessionState and store it exactly once.
 	session_state := &SessionState{
 		SessionSymKey:        cookie.SessionSymKey,
 		ServerSigningPrivKey: server_signing_priv,
 		ClientSigningPubKey:  client_signing_pub,
 		HighestSeenNonce:     0,
 		IsEstablished:        true,
-	} // updates on step 5 below
-
-	state_bytes, err := session_state.MarshalBinary()
-	if err != nil {
-		return s.build_error_response(shared.ERR_CODE_INTERNAL_SERVER)
+		LoginBrakeVersion:    0,
+		LoginBrakeTimestamp:  initial_timestamp,
 	}
-
-	err = s.storage.Store(shared.STORE_CTX_SESSION_KEY, session_id[:], state_bytes)
-	if err != nil {
-		return s.build_error_response(shared.ERR_CODE_INTERNAL_SERVER)
-	}
-
-	// 5. Generate Initial Login Brake
-	initial_brake, initial_cookie, initial_timestamp, err := s.generate_login_brake(1)
-	if err != nil {
-		return s.build_error_response(shared.ERR_CODE_INTERNAL_SERVER)
-	}
-
-	// Update session with brake metadata
-	session_state.LoginBrakeVersion = 0
-	session_state.LoginBrakeTimestamp = initial_timestamp
 
 	if err := s.store_session_state(session_id, session_state); err != nil {
 		return s.build_error_response(shared.ERR_CODE_INTERNAL_SERVER)
 	}
 
-	// 6. Build VerificationResponse containing SessionID and Login Brake
+	// 7. Build VerificationResponse.
 	ver_res := &protocol.VerificationResponse{
 		SessionID:        session_id,
 		LoginBrake:       initial_brake,
@@ -101,7 +92,6 @@ func (s *Server) handle_verification_req(data []byte) []byte {
 		return s.build_error_response(shared.ERR_CODE_INTERNAL_SERVER)
 	}
 
-	// Encrypt the VerificationResponse with session_sym_key
 	nonce_res, ct_res, tag_res, err := s.crypt.EncryptFull(shared.CTX_AEAD_VERIFICATION_RESP, ver_res_bytes, cookie.SessionSymKey[:], nil)
 	if err != nil {
 		return s.build_error_response(shared.ERR_CODE_INTERNAL_SERVER)
@@ -113,7 +103,7 @@ func (s *Server) handle_verification_req(data []byte) []byte {
 		return s.build_error_response(shared.ERR_CODE_INTERNAL_SERVER)
 	}
 
-	sig, err := s.crypt.Sign(shared.CTX_SERVER_SESSION_SIGNING, enc_payload_bytes, server_signing_priv)
+	sig, err := s.crypt.Sign(shared.CTX_SERVER_SESSION_SIGNING_SIG, enc_payload_bytes, server_signing_priv)
 	if err != nil {
 		return s.build_error_response(shared.ERR_CODE_INTERNAL_SERVER)
 	}

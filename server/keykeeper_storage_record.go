@@ -66,8 +66,8 @@ func (k *KeyKeeperStorageRecord) MarshalBinary() ([]byte, error) {
 }
 
 func (k *KeyKeeperStorageRecord) UnmarshalBinary(data []byte) error {
-	// Min size: 16 + 8*3 + 8 + 1 + 16 = 73 bytes
-	const min_size = 73
+	// Min size: 16 (id) + 8*3 (length prefixes) + 8 (ts) + 1 (bool) + 16 (checksum) = 65 bytes
+	const min_size = 65
 	if len(data) < min_size {
 		return errors.New("server: data too short for KeyKeeperStorageRecord")
 	}
@@ -86,30 +86,39 @@ func (k *KeyKeeperStorageRecord) UnmarshalBinary(data []byte) error {
 	copy(k.RecordID[:], data[offset:offset+16])
 	offset += 16
 
+	if offset+8 > payload_length {
+		return errors.New("server: underflow reading DestinationUsername length")
+	}
 	dest_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(dest_len) > payload_length {
-		return errors.New("server: underflow reading DestinationUsername")
+	if dest_len > uint64(payload_length-offset) {
+		return errors.New("server: underflow reading DestinationUsername data")
 	}
-	k.DestinationUsername = make([]byte, dest_len)
+	k.DestinationUsername = make([]byte, int(dest_len))
 	copy(k.DestinationUsername, data[offset:offset+int(dest_len)])
 	offset += int(dest_len)
 
+	if offset+8 > payload_length {
+		return errors.New("server: underflow reading KemCiphertext length")
+	}
 	kem_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(kem_len) > payload_length {
-		return errors.New("server: underflow reading KemCiphertext")
+	if kem_len > uint64(payload_length-offset) {
+		return errors.New("server: underflow reading KemCiphertext data")
 	}
-	k.KemCiphertext = make([]byte, kem_len)
+	k.KemCiphertext = make([]byte, int(kem_len))
 	copy(k.KemCiphertext, data[offset:offset+int(kem_len)])
 	offset += int(kem_len)
 
+	if offset+8 > payload_length {
+		return errors.New("server: underflow reading EncryptedPayload length")
+	}
 	enc_len := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(enc_len) > payload_length {
-		return errors.New("server: underflow reading EncryptedPayload")
+	if enc_len > uint64(payload_length-offset) {
+		return errors.New("server: underflow reading EncryptedPayload data")
 	}
-	k.EncryptedPayload = make([]byte, enc_len)
+	k.EncryptedPayload = make([]byte, int(enc_len))
 	copy(k.EncryptedPayload, data[offset:offset+int(enc_len)])
 	offset += int(enc_len)
 
