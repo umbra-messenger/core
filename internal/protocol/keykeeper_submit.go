@@ -8,50 +8,67 @@ import (
 	"github.com/umbra-messenger/core/internal/shared"
 )
 
-// KeyKeeperSubmitRequest is sent to submit an encrypted record to a destination user.
+// KeyKeeperSubmitRecord is a single record within a batch submission.
+type KeyKeeperSubmitRecord struct {
+	DestinationUsername []byte
+	KemCiphertext       []byte
+	EncryptedPayload    []byte
+}
+
+// KeyKeeperSubmitRequest carries N records for batch submission.
 type KeyKeeperSubmitRequest struct {
-	DestinationUsername  []byte
-	SenderExchangePubKey []byte
-	EncryptedPayload     []byte
+	Records []KeyKeeperSubmitRecord
 }
 
 func (k *KeyKeeperSubmitRequest) MarshalBinary() ([]byte, error) {
-	if k.DestinationUsername == nil || k.SenderExchangePubKey == nil || k.EncryptedPayload == nil {
-		return nil, errors.New("protocol: KeyKeeperSubmitRequest contains nil slices")
+	if k.Records == nil {
+		k.Records = []KeyKeeperSubmitRecord{}
 	}
 
-	dest_len := uint64(len(k.DestinationUsername))
-	sender_pub_len := uint64(len(k.SenderExchangePubKey))
-	enc_payload_len := uint64(len(k.EncryptedPayload))
+	records_count := uint64(len(k.Records))
+	records_data_size := 0
+	for i := 0; i < len(k.Records); i++ {
+		rec := &k.Records[i]
+		if rec.DestinationUsername == nil || rec.KemCiphertext == nil || rec.EncryptedPayload == nil {
+			return nil, errors.New("protocol: KeyKeeperSubmitRecord contains nil slices")
+		}
+		// 8 (len1) + d1 + 8 (len2) + d2 + 8 (len3) + d3
+		records_data_size += 8 + len(rec.DestinationUsername) + 8 + len(rec.KemCiphertext) + 8 + len(rec.EncryptedPayload)
+	}
 
-	// 1 (op) + 8 (len1) + data1 + 8 (len2) + data2 + 8 (len3) + data3 + 16 (checksum)
-	total_size := 1 + 8 + int(dest_len) + 8 + int(sender_pub_len) + 8 + int(enc_payload_len) + 16
+	// 1 (op) + 8 (count) + records_data + 16 (checksum)
+	total_size := 1 + 8 + records_data_size + 16
 	buf := make([]byte, total_size)
 	offset := 0
 
-	// 1. App OpCode
 	buf[offset] = shared.APP_OP_KEYKEEPER_SUBMIT
 	offset += 1
 
-	// 2. DestinationUsername
-	binary.BigEndian.PutUint64(buf[offset:offset+8], dest_len)
+	binary.BigEndian.PutUint64(buf[offset:offset+8], records_count)
 	offset += 8
-	copy(buf[offset:offset+int(dest_len)], k.DestinationUsername)
-	offset += int(dest_len)
 
-	// 3. SenderExchangePubKey
-	binary.BigEndian.PutUint64(buf[offset:offset+8], sender_pub_len)
-	offset += 8
-	copy(buf[offset:offset+int(sender_pub_len)], k.SenderExchangePubKey)
-	offset += int(sender_pub_len)
+	for i := 0; i < len(k.Records); i++ {
+		rec := &k.Records[i]
 
-	// 4. EncryptedPayload
-	binary.BigEndian.PutUint64(buf[offset:offset+8], enc_payload_len)
-	offset += 8
-	copy(buf[offset:offset+int(enc_payload_len)], k.EncryptedPayload)
-	offset += int(enc_payload_len)
+		dest_len := uint64(len(rec.DestinationUsername))
+		binary.BigEndian.PutUint64(buf[offset:offset+8], dest_len)
+		offset += 8
+		copy(buf[offset:offset+int(dest_len)], rec.DestinationUsername)
+		offset += int(dest_len)
 
-	// 5. Checksum
+		kem_len := uint64(len(rec.KemCiphertext))
+		binary.BigEndian.PutUint64(buf[offset:offset+8], kem_len)
+		offset += 8
+		copy(buf[offset:offset+int(kem_len)], rec.KemCiphertext)
+		offset += int(kem_len)
+
+		enc_len := uint64(len(rec.EncryptedPayload))
+		binary.BigEndian.PutUint64(buf[offset:offset+8], enc_len)
+		offset += 8
+		copy(buf[offset:offset+int(enc_len)], rec.EncryptedPayload)
+		offset += int(enc_len)
+	}
+
 	checksum := crypt.Checksum(buf[:offset])
 	copy(buf[offset:offset+16], checksum[:])
 
@@ -59,8 +76,8 @@ func (k *KeyKeeperSubmitRequest) MarshalBinary() ([]byte, error) {
 }
 
 func (k *KeyKeeperSubmitRequest) UnmarshalBinary(data []byte) error {
-	// Min size: 1 (op) + 8*3 (lengths) + 16 (checksum) = 41 bytes
-	const min_size = 1 + 24 + 16
+	// Min size: 1 (op) + 8 (count) + 16 (checksum) = 25 bytes
+	const min_size = 25
 	if len(data) < min_size {
 		return errors.New("protocol: data too short for KeyKeeperSubmitRequest")
 	}
@@ -76,51 +93,55 @@ func (k *KeyKeeperSubmitRequest) UnmarshalBinary(data []byte) error {
 
 	offset := 0
 
-	// 1. App OpCode
 	app_op := data[offset]
 	offset += 1
 	if app_op != shared.APP_OP_KEYKEEPER_SUBMIT {
 		return errors.New("protocol: invalid App OpCode for KeyKeeperSubmitRequest")
 	}
 
-	// 2. DestinationUsername
-	if offset+8 > payload_length {
-		return errors.New("protocol: underflow reading DestinationUsername length")
-	}
-	dest_len := binary.BigEndian.Uint64(data[offset : offset+8])
+	records_count := binary.BigEndian.Uint64(data[offset : offset+8])
 	offset += 8
-	if offset+int(dest_len) > payload_length {
-		return errors.New("protocol: underflow reading DestinationUsername data")
-	}
-	k.DestinationUsername = make([]byte, dest_len)
-	copy(k.DestinationUsername, data[offset:offset+int(dest_len)])
-	offset += int(dest_len)
 
-	// 3. SenderExchangePubKey
-	if offset+8 > payload_length {
-		return errors.New("protocol: underflow reading SenderExchangePubKey length")
-	}
-	sender_pub_len := binary.BigEndian.Uint64(data[offset : offset+8])
-	offset += 8
-	if offset+int(sender_pub_len) > payload_length {
-		return errors.New("protocol: underflow reading SenderExchangePubKey data")
-	}
-	k.SenderExchangePubKey = make([]byte, sender_pub_len)
-	copy(k.SenderExchangePubKey, data[offset:offset+int(sender_pub_len)])
-	offset += int(sender_pub_len)
+	k.Records = make([]KeyKeeperSubmitRecord, records_count)
+	for i := uint64(0); i < records_count; i++ {
+		rec := &k.Records[i]
 
-	// 4. EncryptedPayload
-	if offset+8 > payload_length {
-		return errors.New("protocol: underflow reading EncryptedPayload length")
+		if offset+8 > payload_length {
+			return errors.New("protocol: underflow reading DestinationUsername length")
+		}
+		dest_len := binary.BigEndian.Uint64(data[offset : offset+8])
+		offset += 8
+		if offset+int(dest_len) > payload_length {
+			return errors.New("protocol: underflow reading DestinationUsername data")
+		}
+		rec.DestinationUsername = make([]byte, dest_len)
+		copy(rec.DestinationUsername, data[offset:offset+int(dest_len)])
+		offset += int(dest_len)
+
+		if offset+8 > payload_length {
+			return errors.New("protocol: underflow reading KemCiphertext length")
+		}
+		kem_len := binary.BigEndian.Uint64(data[offset : offset+8])
+		offset += 8
+		if offset+int(kem_len) > payload_length {
+			return errors.New("protocol: underflow reading KemCiphertext data")
+		}
+		rec.KemCiphertext = make([]byte, kem_len)
+		copy(rec.KemCiphertext, data[offset:offset+int(kem_len)])
+		offset += int(kem_len)
+
+		if offset+8 > payload_length {
+			return errors.New("protocol: underflow reading EncryptedPayload length")
+		}
+		enc_len := binary.BigEndian.Uint64(data[offset : offset+8])
+		offset += 8
+		if offset+int(enc_len) > payload_length {
+			return errors.New("protocol: underflow reading EncryptedPayload data")
+		}
+		rec.EncryptedPayload = make([]byte, enc_len)
+		copy(rec.EncryptedPayload, data[offset:offset+int(enc_len)])
+		offset += int(enc_len)
 	}
-	enc_payload_len := binary.BigEndian.Uint64(data[offset : offset+8])
-	offset += 8
-	if offset+int(enc_payload_len) > payload_length {
-		return errors.New("protocol: underflow reading EncryptedPayload data")
-	}
-	k.EncryptedPayload = make([]byte, enc_payload_len)
-	copy(k.EncryptedPayload, data[offset:offset+int(enc_payload_len)])
-	offset += int(enc_payload_len)
 
 	if offset != payload_length {
 		return errors.New("protocol: unexpected trailing data in KeyKeeperSubmitRequest")
@@ -129,31 +150,38 @@ func (k *KeyKeeperSubmitRequest) UnmarshalBinary(data []byte) error {
 	return nil
 }
 
-// KeyKeeperSubmitResponse returns the server-assigned RecordID for the submitted record.
+// KeyKeeperSubmitResponse returns the record IDs for all submitted records.
 type KeyKeeperSubmitResponse struct {
 	StatusCode uint8
-	RecordID   [16]byte
+	RecordIDs  [][16]byte
 }
 
 func (k *KeyKeeperSubmitResponse) MarshalBinary() ([]byte, error) {
-	// 1 (op) + 1 (status) + 16 (record_id) + 16 (checksum) = 34 bytes
-	total_size := 34
+	if k.RecordIDs == nil {
+		k.RecordIDs = [][16]byte{}
+	}
+
+	ids_count := uint64(len(k.RecordIDs))
+
+	// 1 (op) + 1 (status) + 8 (count) + count*16 + 16 (checksum)
+	total_size := 1 + 1 + 8 + int(ids_count)*16 + 16
 	buf := make([]byte, total_size)
 	offset := 0
 
-	// 1. App OpCode
 	buf[offset] = shared.APP_OP_KEYKEEPER_SUBMIT
 	offset += 1
 
-	// 2. StatusCode
 	buf[offset] = k.StatusCode
 	offset += 1
 
-	// 3. RecordID
-	copy(buf[offset:offset+16], k.RecordID[:])
-	offset += 16
+	binary.BigEndian.PutUint64(buf[offset:offset+8], ids_count)
+	offset += 8
 
-	// 4. Checksum
+	for i := 0; i < len(k.RecordIDs); i++ {
+		copy(buf[offset:offset+16], k.RecordIDs[i][:])
+		offset += 16
+	}
+
 	checksum := crypt.Checksum(buf[:offset])
 	copy(buf[offset:offset+16], checksum[:])
 
@@ -161,7 +189,8 @@ func (k *KeyKeeperSubmitResponse) MarshalBinary() ([]byte, error) {
 }
 
 func (k *KeyKeeperSubmitResponse) UnmarshalBinary(data []byte) error {
-	const min_size = 34
+	// Min size: 1 (op) + 1 (status) + 8 (count) + 16 (checksum) = 26 bytes
+	const min_size = 26
 	if len(data) < min_size {
 		return errors.New("protocol: data too short for KeyKeeperSubmitResponse")
 	}
@@ -177,26 +206,26 @@ func (k *KeyKeeperSubmitResponse) UnmarshalBinary(data []byte) error {
 
 	offset := 0
 
-	// 1. App OpCode
 	app_op := data[offset]
 	offset += 1
 	if app_op != shared.APP_OP_KEYKEEPER_SUBMIT {
 		return errors.New("protocol: invalid App OpCode for KeyKeeperSubmitResponse")
 	}
 
-	// 2. StatusCode
-	if offset+1 > payload_length {
-		return errors.New("protocol: underflow reading StatusCode")
-	}
 	k.StatusCode = data[offset]
 	offset += 1
 
-	// 3. RecordID
-	if offset+16 > payload_length {
-		return errors.New("protocol: underflow reading RecordID")
+	ids_count := binary.BigEndian.Uint64(data[offset : offset+8])
+	offset += 8
+
+	k.RecordIDs = make([][16]byte, ids_count)
+	for i := uint64(0); i < ids_count; i++ {
+		if offset+16 > payload_length {
+			return errors.New("protocol: underflow reading RecordID data")
+		}
+		copy(k.RecordIDs[i][:], data[offset:offset+16])
+		offset += 16
 	}
-	copy(k.RecordID[:], data[offset:offset+16])
-	offset += 16
 
 	if offset != payload_length {
 		return errors.New("protocol: unexpected trailing data in KeyKeeperSubmitResponse")

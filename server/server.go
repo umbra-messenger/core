@@ -44,7 +44,6 @@ func (s *Server) Route(request_payload []byte) []byte {
 		return s.build_error_response(shared.ERR_CODE_UNKNOWN_MSG_TYPE)
 	}
 }
-
 func (s *Server) dispatch_app_request(session_id [16]byte, session_state *SessionState, app_opcode uint8, payload []byte) ([]byte, error) {
 	switch app_opcode {
 	case shared.APP_OP_CREATE_USER:
@@ -55,6 +54,30 @@ func (s *Server) dispatch_app_request(session_id [16]byte, session_state *Sessio
 		return s.handle_app_lookup_public_key(session_id, session_state, payload)
 	case shared.APP_OP_DESTROY_SESSION:
 		return s.handle_app_destroy_session(session_id, session_state, payload)
+	case shared.APP_OP_SYNC:
+		return s.handle_app_sync(session_id, session_state, payload)
+	case shared.APP_OP_KEYKEEPER_SUBMIT:
+		return s.handle_app_keykeeper_submit(session_id, session_state, payload)
+	case shared.APP_OP_KEYKEEPER_FETCH:
+		return s.handle_app_keykeeper_fetch(session_id, session_state, payload)
+	case shared.APP_OP_KEYKEEPER_BATCH_FETCH:
+		return s.handle_app_keykeeper_batch_fetch(session_id, session_state, payload)
+	case shared.APP_OP_KEYKEEPER_CLASSIFY:
+		return s.handle_app_keykeeper_classify(session_id, session_state, payload)
+	case shared.APP_OP_PERSONAL_NOTE_FETCH:
+		return s.handle_app_personal_note_fetch(session_id, session_state, payload)
+	case shared.APP_OP_PERSONAL_NOTE_UPDATE:
+		return s.handle_app_personal_note_update(session_id, session_state, payload)
+	case shared.APP_OP_GROUP_CREATE:
+		return s.handle_app_group_create(session_id, session_state, payload)
+	case shared.APP_OP_GROUP_POST_MESSAGE:
+		return s.handle_app_group_post_message(session_id, session_state, payload)
+	case shared.APP_OP_GROUP_REKEY:
+		return s.handle_app_group_rekey(session_id, session_state, payload)
+	case shared.APP_OP_ADMIN_KEY_ROTATION:
+		return s.handle_app_admin_key_rotation(session_id, session_state, payload)
+	case shared.APP_OP_OWNER_WIPE:
+		return s.handle_app_owner_wipe(session_id, session_state, payload)
 	default:
 		return nil, errors.New("unknown app opcode")
 	}

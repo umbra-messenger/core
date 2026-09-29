@@ -154,10 +154,10 @@ func (k *KeyKeeperBatchFetchResponse) MarshalBinary() ([]byte, error) {
 	records_data_size := 0
 	for i := 0; i < len(k.Records); i++ {
 		rec := &k.Records[i]
-		if rec.SenderExchangePubKey == nil || rec.EncryptedPayload == nil {
+		if rec.KemCiphertext == nil || rec.EncryptedPayload == nil {
 			return nil, errors.New("protocol: KeyKeeperRecord contains nil slices")
 		}
-		records_data_size += 16 + 8 + len(rec.SenderExchangePubKey) + 8 + len(rec.EncryptedPayload) + 8
+		records_data_size += 16 + 8 + len(rec.KemCiphertext) + 8 + len(rec.EncryptedPayload) + 8
 	}
 
 	total_size := 1 + 1 + 8 + records_data_size + 16
@@ -179,10 +179,10 @@ func (k *KeyKeeperBatchFetchResponse) MarshalBinary() ([]byte, error) {
 		copy(buf[offset:offset+16], rec.RecordID[:])
 		offset += 16
 
-		sender_pub_len := uint64(len(rec.SenderExchangePubKey))
+		sender_pub_len := uint64(len(rec.KemCiphertext))
 		binary.BigEndian.PutUint64(buf[offset:offset+8], sender_pub_len)
 		offset += 8
-		copy(buf[offset:offset+int(sender_pub_len)], rec.SenderExchangePubKey)
+		copy(buf[offset:offset+int(sender_pub_len)], rec.KemCiphertext)
 		offset += int(sender_pub_len)
 
 		enc_payload_len := uint64(len(rec.EncryptedPayload))
@@ -247,15 +247,15 @@ func (k *KeyKeeperBatchFetchResponse) UnmarshalBinary(data []byte) error {
 		offset += 16
 
 		if offset+8 > payload_length {
-			return errors.New("protocol: underflow reading SenderExchangePubKey length")
+			return errors.New("protocol: underflow reading KemCiphertext length")
 		}
 		sender_pub_len := binary.BigEndian.Uint64(data[offset : offset+8])
 		offset += 8
 		if offset+int(sender_pub_len) > payload_length {
-			return errors.New("protocol: underflow reading SenderExchangePubKey data")
+			return errors.New("protocol: underflow reading KemCiphertext data")
 		}
-		rec.SenderExchangePubKey = make([]byte, sender_pub_len)
-		copy(rec.SenderExchangePubKey, data[offset:offset+int(sender_pub_len)])
+		rec.KemCiphertext = make([]byte, sender_pub_len)
+		copy(rec.KemCiphertext, data[offset:offset+int(sender_pub_len)])
 		offset += int(sender_pub_len)
 
 		if offset+8 > payload_length {

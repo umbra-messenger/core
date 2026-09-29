@@ -23,6 +23,18 @@ const (
 	CTX_USER_REGISTRATION      = "umbra.user.registration_auth"
 	CTX_LOGIN_BRAKE_COOKIE     = "umbra.login_brake.cookie_aead"
 	CTX_LOGIN_BRAKE_POW        = "umbra.login_brake.pow_hash"
+	CTX_KEYKEEPER_KEM          = "umbra.keykeeper.kem"
+	CTX_KEYKEEPER_BATCH_FETCH  = "umbra.keykeeper.batch_fetch_auth"
+	CTX_KEYKEEPER_CLASSIFY     = "umbra.keykeeper.classify_auth"
+	CTX_PERSONAL_NOTE_FETCH    = "umbra.personal_note.fetch_auth"
+	CTX_PERSONAL_NOTE_UPDATE   = "umbra.personal_note.update_auth"
+	CTX_GROUP_WRITE            = "umbra.group.write_signature"
+	CTX_GROUP_REKEY            = "umbra.group.rekey_signature"
+	CTX_GROUP_ADMIN_ROTATION   = "umbra.group.admin_rotation_signature"
+	CTX_GROUP_WIPE             = "umbra.group.wipe_signature"
+	CTX_GROUP_KEY_DERIV        = "umbra.group.key_derivation"
+	CTX_ADMIN_KEY_DERIV        = "umbra.group.admin_key_derivation"
+	CTX_OWNER_KEY_DERIV        = "umbra.group.owner_key_derivation"
 )
 
 // Storage contexts (STORE_CTX_*) tell the Host the logical category of stored data.
@@ -35,6 +47,7 @@ const (
 	STORE_CTX_CLIENT_REGISTRY = "client_registry"
 	STORE_CTX_KEYKEEPER       = "keykeeper"
 	STORE_CTX_PERSONAL_NOTE   = "personal_note"
+	STORE_CTX_GROUP_MESSAGE   = "group_message"
 )
 
 // Protocol sizes, limits, and magic bytes.
@@ -51,6 +64,7 @@ const (
 	LOGIN_BRAKE_LEN                       = 32
 	LOGIN_BRAKE_POW_DIFFICULTY_BITS       = 8
 	LOGIN_BRAKE_SKIP_THRESHOLD_SECONDS    = 3600
+	KEYKEEPER_MAX_BATCH_SIZE              = 50
 )
 
 // Message Types (uint8) for Server routing.
@@ -102,4 +116,11 @@ const (
 	// Application response status codes
 	APP_STATUS_SUCCESS      uint8 = 0
 	APP_STATUS_BRAKE_ROTATE uint8 = 1
+)
+
+const (
+	KEYKEEPER_TYPE_GROUP_KEY    uint8 = 0x01
+	KEYKEEPER_TYPE_ADMIN_KEY    uint8 = 0x02
+	KEYKEEPER_TYPE_SSS_SHARE    uint8 = 0x03
+	KEYKEEPER_TYPE_GROUP_INVITE uint8 = 0x04
 )
